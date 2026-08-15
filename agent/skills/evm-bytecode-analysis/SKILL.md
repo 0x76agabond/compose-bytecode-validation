@@ -1,6 +1,6 @@
 ---
 name: evm-bytecode-analysis
-description: Analyze deployed EVM runtime bytecode with EVMole or embed EVMole in Rust, Go, Python, or JavaScript applications. Use for unverified-contract inspection, ABI reconstruction from runtime code, selector discovery, storage-access analysis, EVM control-flow inspection, and application integration. Do not use for calldata decoding, source verification, creation-bytecode execution, or full source-code decompilation.
+description: Analyze supplied deployed EVM runtime bytecode with EVMole or guide a separate application in integrating a published EVMole Rust, Go, Python, or JavaScript binding. Use for unverified-contract inspection, ABI reconstruction from runtime code, selector discovery, storage-access analysis, EVM control-flow inspection, and external application integration. Do not use for implementing, debugging, refactoring, or reviewing EVMole's own source code unless the task specifically targets the CLI, MCP server, agent adapter, schemas, or this skill. Do not use for calldata decoding, source verification, creation-bytecode execution, or full source-code decompilation.
 ---
 
 # EVM Bytecode Analysis
@@ -12,10 +12,17 @@ bytecode.
 
 - To answer a question from supplied runtime bytecode, use the analysis workflow
   below. Prefer the MCP tool when available and otherwise use the JSON CLI.
-- To add EVMole to application code, use the native library for the project's
-  language instead of invoking the MCP server or agent JSON adapter from product
-  code. Read [references/libraries.md](references/libraries.md) for package
-  names, entry points, and documentation.
+- To add published EVMole to a separate application's code, use the native
+  library for the project's language instead of invoking the MCP server or
+  agent JSON adapter from product code. Read
+  [references/libraries.md](references/libraries.md) for package names, entry
+  points, and documentation.
+- To implement, debug, refactor, or review EVMole itself, follow that
+  repository's contributor instructions and inspect its source. Do not use a
+  published package, MCP server, or JSON CLI as a substitute for understanding
+  the implementation. Read this skill only when the repository task targets
+  the CLI, MCP server, agent adapter, schemas, interpretation behavior, or the
+  skill itself.
 - Use the JSON CLI as an application process boundary only when the user
   explicitly wants a subprocess or a language without a supported binding.
 
