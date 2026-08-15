@@ -7,9 +7,28 @@ use crate::evm::{
 /// A symbolic value on the stack.
 pub enum StackSym {
     Before(usize),
-    Pushed([u8; 4]), // only PUSH[1..4] handled
+    /// Exact pushed, PC-derived, or calculated value that is not a valid jump destination.
+    Constant(usize),
     Jumpdest(usize /*to*/),
     Other(usize /*pc*/),
+}
+
+impl StackSym {
+    fn known_value(&self) -> Option<usize> {
+        match self {
+            Self::Constant(value) => Some(*value),
+            Self::Jumpdest(value) => Some(*value),
+            Self::Before(_) | Self::Other(_) => None,
+        }
+    }
+
+    fn from_value(value: usize, code: &[u8]) -> Self {
+        if code.get(value) == Some(&op::JUMPDEST) {
+            Self::Jumpdest(value)
+        } else {
+            Self::Constant(value)
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -157,14 +176,10 @@ impl State {
                     let n = (op - op::PUSH0) as usize;
                     let mut args = [0u8; 4];
                     args[4 - n..].copy_from_slice(&code[pc + 1..pc + 1 + n]);
-                    let val = u32::from_be_bytes(args) as usize;
-                    self.stack
-                        .push(if val < code.len() && code[val] == op::JUMPDEST {
-                            StackSym::Jumpdest(val)
-                        } else {
-                            StackSym::Pushed(args)
-                        });
+                    let value = u32::from_be_bytes(args) as usize;
+                    self.stack.push(StackSym::from_value(value, code));
                 }
+                op::PC => self.stack.push(StackSym::from_value(pc, code)),
                 op::DUP1..=op::DUP16 => {
                     let n = (op - op::DUP1 + 1) as usize;
                     let stack_len = self.stack.len();
@@ -178,13 +193,26 @@ impl State {
                 op::AND => {
                     let s1 = self.stack.pop().expect("Stack underflow in AND");
                     let s2 = self.stack.pop().expect("Stack underflow in AND");
-                    if s1 == StackSym::Pushed([0xff; 4]) {
+                    let mask = u32::MAX as usize;
+                    if s1.known_value() == Some(mask) {
                         self.stack.push(s2);
-                    } else if s2 == StackSym::Pushed([0xff; 4]) {
+                    } else if s2.known_value() == Some(mask) {
                         self.stack.push(s1);
                     } else {
                         self.stack.push(StackSym::Other(pc));
                     }
+                }
+                op::ADD => {
+                    let s1 = self.stack.pop().expect("Stack underflow in ADD");
+                    let s2 = self.stack.pop().expect("Stack underflow in ADD");
+                    let result = s1
+                        .known_value()
+                        .zip(s2.known_value())
+                        .and_then(|(v1, v2)| v1.checked_add(v2))
+                        .map_or(StackSym::Other(pc), |value| {
+                            StackSym::from_value(value, code)
+                        });
+                    self.stack.push(result);
                 }
 
                 op::JUMP => {
@@ -328,11 +356,11 @@ mod tests {
                 vec![
                     StackSym::Before(10),
                     StackSym::Before(9),
-                    StackSym::Pushed([1, 2, 3, 4]),
+                    StackSym::Constant(0x0102_0304),
                 ],
                 vec![
                     StackSym::Before(10),
-                    StackSym::Pushed([1, 2, 3, 4]),
+                    StackSym::Constant(0x0102_0304),
                     StackSym::Other(99),
                 ],
             ),
@@ -346,13 +374,13 @@ mod tests {
                     StackSym::Before(5),
                     StackSym::Other(200),
                     StackSym::Other(201),
-                    StackSym::Pushed([9, 9, 9, 9]),
+                    StackSym::Constant(0x0909_0909),
                     StackSym::Other(202),
                 ],
                 vec![
                     StackSym::Before(5),
                     StackSym::Other(200),
-                    StackSym::Pushed([9, 9, 9, 9]),
+                    StackSym::Constant(0x0909_0909),
                     StackSym::Other(202),
                 ],
             ),
@@ -366,5 +394,28 @@ mod tests {
             let resolved_state = self_state.resolve_with_parent(&parent_state);
             assert_eq!(resolved_state.stack, expected_stack);
         }
+    }
+
+    #[test]
+    fn pushed_and_mask_preserves_jump_destination() {
+        let code = [
+            op::PUSH1,
+            0x0a,
+            op::PUSH4,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            op::AND,
+            op::JUMP,
+            op::STOP,
+            op::JUMPDEST,
+            op::STOP,
+        ];
+        let mut state = State::new();
+
+        let target = state.exec(&code, 0, None);
+
+        assert_eq!(target, Some(StackSym::Jumpdest(10)));
     }
 }

@@ -302,8 +302,8 @@ fn resolve_dynamic_jump_path(
                     });
                 }
             }
-            StackSym::Pushed(_) | StackSym::Other(_) => {
-                // push, but not jumpdest or other opcode
+            StackSym::Constant(_) | StackSym::Other(_) => {
+                // Known non-destination constant or an unknown value.
                 if rev_idx.insert_badpath(&new_path) {
                     dynamic_jumps.push(DynamicJump {
                         path: new_path,
