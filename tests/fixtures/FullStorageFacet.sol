@@ -65,13 +65,13 @@ contract FullStorageFacet {
     bytes32 private constant STORAGE_POSITION =
         keccak256("compose.fixture.virtual-storage");
 
-    function readFullFlag() external view returns (bool) {
-        return _storage().flag;
+    function writeFullFlag(bool value) external {
+        _storage().flag = value;
     }
 
     function exportSelectors() external pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](1);
-        selectors[0] = this.readFullFlag.selector;
+        selectors[0] = this.writeFullFlag.selector;
     }
 
     function _storage() private pure returns (Storage storage s) {

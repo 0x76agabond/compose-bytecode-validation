@@ -209,19 +209,28 @@ it should not spawn `cargo` or parse human-readable CLI output.
 
 ## Compose Validation Extension Boundary
 
-The experimental host lives in `src/compose/` and compares two paths over the
-same EVMole storage observations:
+The active validation host lives in `src/storage_validation/`. It consumes the
+canonical full-diamond VSL and persistent write evidence from one facet's
+runtime bytecode. It reports four independent evidence collections:
+
+- `collisions` for proven contradictions;
+- `validatedVariables` for recovered writes compatible with VSL;
+- `uncertainScopes` for unresolved writes at a concrete storage location;
+- `diagnostics` when even the storage root cannot be recovered.
+
+The earlier experiments remain in `src/compose/` for comparison:
 
 - `compose` keeps bytecode inference independent and applies VSL afterward.
 - `compose_vsl_bias` allows VSL physical slot constraints to resolve selected
   ambiguous inference, while recording every such resolution as an assumption.
 
-The current comparison consumes storage evidence after symbolic tracing but
+The active validator consumes storage evidence after symbolic tracing but
 before EVMole's final slot-record collapse. It covers root slot, packed offset,
-bit width, scalar/container VSL token semantics, and virtual struct children
-while preserving competing inferred type candidates. `no-contradiction` is not
-yet a complete compatibility proof because unreachable storage and unsupported
-or compiler-specific patterns remain uncertain.
+bit width, and scalar/container VSL token semantics. Container child member
+paths are currently scoped uncertainty until mapping and array child path
+reconstruction is connected to VSL child records. No collision is not a
+complete compatibility proof because unreachable paths remain outside the
+evidence set.
 
 The fork should preserve EVMole's existing `StorageRecord` output for upstream
 compatibility and add a parallel raw evidence stream before storage
@@ -237,22 +246,22 @@ flowchart LR
     anchors --> engine
     engine --> evidence["StorageEvidence<br/>operation, symbolic path, slot delta,<br/>bit range, type signal, confidence"]
 
-    evidence --> matcher["Compose VSL matcher"]
+    evidence --> matcher["Compose persistent-write validator"]
     slotmap --> matcher
     vsl --> matcher
-    matcher --> verdict["error | warning | safe"]
+    matcher --> verdict["collisions | validated | scoped uncertainty | diagnostics"]
 ```
 
 The primary seam is `src/storage/mod.rs`, immediately after a storage access
 has a symbolic slot expression and before `finalize_slot_records()` groups and
-flattens it. Proposed `StorageEvidence` should retain:
+flattens it. `StorageEvidence` retains:
 
 - read/write operation and persistent/transient domain;
 - selector and program counter;
 - symbolic root, mapping, dynamic-array, and constant-slot path;
 - slot delta from a known root where recoverable;
 - packed bit offset and selected width;
-- observed type signal and confidence.
+- observed type signal and whether the value type was actually recovered.
 
 `src/arguments/mod.rs` remains valuable as a source of reusable type-recognition
 patterns and optional known function anchors. It is not the correct layer to
@@ -261,9 +270,10 @@ compare Virtual Storage Layout entries.
 The Compose matcher belongs above the generic engine and owns policy:
 
 ```text
-proven root/path/container/bit-range/type contradiction -> error
-missing, ambiguous, or VSL-assumed evidence             -> warning
-recovered evidence compatible with VSL                  -> no contradiction found
+proven root/path/container/bit-range/type contradiction -> collision
+known storage location with unresolved type/path        -> scoped uncertainty
+unresolved storage root                                 -> diagnostic
+recovered evidence compatible with VSL                  -> validated variable
 ```
 
 Mapping key type alone should remain diagnostic evidence rather than a storage

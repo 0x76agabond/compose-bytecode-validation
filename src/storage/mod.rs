@@ -207,6 +207,10 @@ impl StorageType {
         }
     }
 
+    fn has_known_internal_type(&self) -> bool {
+        !matches!(self.get_internal_type(), DynSolType::Uint(256))
+    }
+
     fn is_string_like(&self) -> bool {
         matches!(
             self,
@@ -249,6 +253,8 @@ struct StorageElement {
     stype: StorageType,
     rshift: u8, // in bytes
     is_write: bool,
+    write_pc: Option<usize>,
+    write_value_known: bool,
     last_and: Option<U256>,
     last_or2: Option<Element<Label>>,
 }
@@ -446,14 +452,17 @@ impl Storage {
         slot: Element<Label>,
         rshift: u8,
         vtype: DynSolType,
+        write_pc: usize,
+        write_value_known: bool,
     ) {
-        let x = self.get(domain, slot, true);
+        let x = self.get(domain, slot, true, Some(write_pc));
         x.borrow_mut().stype.set_type(vtype);
         x.borrow_mut().rshift = rshift;
+        x.borrow_mut().write_value_known = write_value_known;
     }
 
     fn load(&mut self, domain: StorageDomain, slot: Element<Label>) -> Rc<RefCell<StorageElement>> {
-        self.get(domain, slot, false)
+        self.get(domain, slot, false, None)
     }
 
     fn get(
@@ -461,6 +470,7 @@ impl Storage {
         domain: StorageDomain,
         slot: Element<Label>,
         is_write: bool,
+        write_pc: Option<usize>,
     ) -> Rc<RefCell<StorageElement>> {
         let slot_expr = match slot.label {
             Some(Label::Keccak(_, expr)) => expr,
@@ -476,6 +486,8 @@ impl Storage {
             stype,
             rshift: 0,
             is_write,
+            write_pc,
+            write_value_known: false,
             last_and: None,
             last_or2: None,
         }));
@@ -491,6 +503,7 @@ fn analyze(
     vm: &mut Vm<Label, CallDataImpl<Label>>,
     st: &mut Storage,
     ret: StepResult<Label>,
+    pc: usize,
 ) -> Result<Option<usize>, Box<dyn std::error::Error>> {
     match ret {
         StepResult {
@@ -723,7 +736,8 @@ fn analyze(
             }
 
             match value.label {
-                Some(Label::Typed(t)) => st.store(domain, slot, 0, t),
+                Some(Label::Typed(t)) => st.store(domain, slot, 0, t, pc, true),
+                Some(Label::Constant) => st.store(domain, slot, 0, DynSolType::Uint(256), pc, true),
                 Some(Label::Loaded(sl)) => {
                     let sbr = sl.borrow();
                     if let Some(lor) = &sbr.last_or2 {
@@ -733,26 +747,35 @@ fn analyze(
                             let shifted_mask = land >> tv;
                             let sz = shifted_mask.trailing_zeros();
 
-                            let dt = match &lor.label {
-                                Some(Label::Typed(tp)) => tp.clone(),
-                                Some(Label::Loaded(sl2)) => sl2.borrow().stype.get_internal_type(),
+                            let (dt, known) = match &lor.label {
+                                Some(Label::Typed(tp)) => (tp.clone(), true),
+                                Some(Label::Loaded(sl2)) => {
+                                    let sl2 = sl2.borrow();
+                                    (
+                                        sl2.stype.get_internal_type(),
+                                        sl2.stype.has_known_internal_type(),
+                                    )
+                                }
                                 _ => {
-                                    if sz == 160 {
+                                    let inferred = if sz == 160 {
                                         DynSolType::Address
                                     } else {
                                         DynSolType::Uint(sz)
-                                    }
+                                    };
+                                    (inferred, true)
                                 }
                             };
-                            st.store(domain, slot, (tv / 8) as u8, dt);
+                            st.store(domain, slot, (tv / 8) as u8, dt, pc, known);
                         } else {
-                            st.store(domain, slot, 0, sbr.stype.get_internal_type());
+                            let known = sbr.stype.has_known_internal_type();
+                            st.store(domain, slot, 0, sbr.stype.get_internal_type(), pc, known);
                         }
                     } else {
-                        st.store(domain, slot, 0, sbr.stype.get_internal_type());
+                        let known = sbr.stype.has_known_internal_type();
+                        st.store(domain, slot, 0, sbr.stype.get_internal_type(), pc, known);
                     }
                 }
-                _ => st.store(domain, slot, 0, DynSolType::Uint(256)),
+                _ => st.store(domain, slot, 0, DynSolType::Uint(256), pc, false),
             }
         }
 
@@ -909,6 +932,7 @@ fn analyze_rec(
             println!("{vm:?}\n");
             println!("storage: {:?}\n", st.loaded);
         }
+        let pc = vm.pc;
         let ret = match vm.step() {
             Ok(v) => v,
             Err(_e) => {
@@ -921,7 +945,7 @@ fn analyze_rec(
             break;
         }
 
-        match analyze(&mut vm, st, ret) {
+        match analyze(&mut vm, st, ret, pc) {
             Err(_) => {
                 // println!("errbrk");
                 break;
@@ -1038,13 +1062,17 @@ pub(crate) struct StorageEvidence {
     pub inferred_type: String,
     pub score: usize,
     pub is_write: bool,
+    pub value_type_known: bool,
+    pub write_pc: Option<usize>,
     pub selector: Selector,
+    pub is_fallback_probe: bool,
     pub mask: Option<String>,
 }
 
 fn collect_storage_evidence(
     evidence: &mut Vec<StorageEvidence>,
     selector: Selector,
+    is_fallback_probe: bool,
     loaded: &SlotHashMap,
 ) {
     for elements in loaded.values() {
@@ -1061,7 +1089,10 @@ fn collect_storage_evidence(
                 inferred_type: format!("{:?}", element.stype),
                 score: element.stype.get_score(),
                 is_write: element.is_write,
+                value_type_known: element.write_value_known,
+                write_pc: element.write_pc,
                 selector,
+                is_fallback_probe,
                 mask: element.last_and.map(|mask| format!("{mask:?}")),
             });
         }
@@ -1213,12 +1244,12 @@ where
     for &(selector, _, ref arguments) in &functions {
         let loaded =
             analyze_one_function(code, selector, arguments.as_ref(), false, real_gas_limit);
-        collect_storage_evidence(&mut evidence, selector, &loaded);
+        collect_storage_evidence(&mut evidence, selector, false, &loaded);
         collect_slot_records(&mut slot_records, selector, loaded);
     }
 
     let fallback = analyze_one_function(code, fallback_selector, &[], true, real_gas_limit);
-    collect_storage_evidence(&mut evidence, fallback_selector, &fallback);
+    collect_storage_evidence(&mut evidence, fallback_selector, true, &fallback);
     collect_slot_records(&mut slot_records, fallback_selector, fallback);
 
     StorageLayouts {

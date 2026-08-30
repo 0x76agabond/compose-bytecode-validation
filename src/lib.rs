@@ -20,6 +20,7 @@ mod metadata;
 mod selectors;
 mod state_mutability;
 mod storage;
+pub mod storage_validation;
 mod utils;
 
 #[cfg(feature = "serde")]

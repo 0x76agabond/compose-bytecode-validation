@@ -1,0 +1,61 @@
+{
+  "records": [
+    {
+      "id": "0xaa3b566d7f79817dbcee2046cf2539b117d83344258ed417b7156ff42219e7d8",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf2",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf2",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "Canonical.sol",
+      "contractName": "Case5Canonical",
+      "structName": "Storage",
+      "virtualPath": "compose.validation.case5.array-struct",
+      "parentVirtualPath": null,
+      "diamondName": null
+    },
+    {
+      "id": "0x4648d554b6a1f0582fef234449016421a4074995f4f0e4b1d00fa72202bc46f9",
+      "parentPath": "compose.validation.case5.array-struct",
+      "kind": "immutable",
+      "codeWidth": 1,
+      "layout": [
+        "0x03",
+        "0x53",
+        "0x57"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0x03",
+        "0x53",
+        "0x57"
+      ],
+      "slots": [
+        [
+          160,
+          32,
+          64
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "Canonical.sol",
+      "contractName": "Case5Canonical",
+      "structName": "Storage",
+      "virtualPath": "compose.validation.case5.array-struct.0",
+      "parentVirtualPath": "compose.validation.case5.array-struct",
+      "diamondName": null
+    }
+  ]
+}

@@ -24,13 +24,13 @@ contract CompatibleStorageFacet {
     bytes32 private constant STORAGE_POSITION =
         keccak256("compose.fixture.virtual-storage");
 
-    function readCompatibleOwner() external view returns (address) {
-        return _storage().owner;
+    function writeCompatibleOwner(address value) external {
+        _storage().owner = value;
     }
 
     function exportSelectors() external pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](1);
-        selectors[0] = this.readCompatibleOwner.selector;
+        selectors[0] = this.writeCompatibleOwner.selector;
     }
 
     function _storage() private pure returns (Storage storage s) {

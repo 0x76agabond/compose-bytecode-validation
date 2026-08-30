@@ -12,6 +12,7 @@ dist/
 cache/
 
 target/
+tests/fixtures/foundry-out/
 .aider*
 .gradle
 

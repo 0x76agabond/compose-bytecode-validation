@@ -1,7 +1,6 @@
-use evmole::compose::{
-    ComposeEngine, ComposeValidationInput, ComposeValidationStatus, VirtualStorageLayout,
-    VirtualStorageLayoutKind, VirtualStorageLayoutRecord, VirtualStorageLayoutSource,
-    validate_and_print,
+use evmole::{
+    compose::{VirtualStorageLayoutKind, VirtualStorageLayoutRecord, VirtualStorageLayoutSource},
+    storage_validation::{StorageValidationInput, VirtualStorageLayout, validate},
 };
 
 fn decode_hex(value: &str) -> Vec<u8> {
@@ -51,34 +50,39 @@ fn normal_layout() -> VirtualStorageLayoutRecord {
 }
 
 #[test]
-fn compares_unbiased_and_vsl_biased_inference() {
-    let input = ComposeValidationInput {
+fn validates_recovered_write_against_the_vsl() {
+    let report = validate(&StorageValidationInput {
         bytecode: decode_hex(include_str!("fixtures/legacy/normal-bytecode.txt")),
         virtual_storage_layout: VirtualStorageLayout {
             records: vec![normal_layout()],
         },
-    };
+    });
 
-    let report = validate_and_print(&input);
+    assert!(report.collisions.is_empty());
+    assert!(report.uncertain_scopes.is_empty());
+    assert_eq!(report.validated_variables.len(), 1, "{report:#?}");
+    assert_eq!(report.validated_variables[0].expected_type, "uint8");
+    assert_eq!(report.validated_variables[0].observed_type, "uint8");
+    assert!(report.validated_variables[0].location.pc.is_some());
+}
 
-    assert_eq!(report.compose.engine, ComposeEngine::Compose);
+#[test]
+fn reports_actual_bytecode_that_overwrites_a_packed_vsl_slot() {
+    let report = validate(&StorageValidationInput {
+        bytecode: decode_hex(include_str!(
+            "fixtures/storage-validation/wrong-packed-write-bytecode.txt"
+        )),
+        virtual_storage_layout: VirtualStorageLayout {
+            records: vec![normal_layout()],
+        },
+    });
+
+    assert_eq!(report.collisions.len(), 1, "{report:#?}");
     assert_eq!(
-        report.compose_vsl_bias.engine,
-        ComposeEngine::ComposeVslBias
+        report.collisions[0].virtual_path,
+        "evmole.normal.slot[3].byte[0]"
     );
-    assert_eq!(
-        report.compose.status,
-        ComposeValidationStatus::NoContradiction
-    );
-    assert_eq!(
-        report.compose_vsl_bias.status,
-        ComposeValidationStatus::NoContradiction
-    );
-    assert_eq!(report.compose.observations.len(), 10);
-    assert!(report.compose.assumptions.is_empty());
-    assert!(report.compose_vsl_bias.assumptions.is_empty());
-    assert!(report.compose.observations.iter().any(|observation| {
-        observation.inferred_type == "bytes4"
-            && observation.candidate_types == ["bytes4", "uint256"]
-    }));
+    assert_eq!(report.collisions[0].expected_type, "bytes4");
+    assert_eq!(report.collisions[0].observed_type, "uint256");
+    assert!(report.collisions[0].location.pc.is_some());
 }

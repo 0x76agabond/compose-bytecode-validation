@@ -1,7 +1,7 @@
 {
   "records": [
     {
-      "id": "0xb4df32537f6767405c9db7d67260e5375218aecdea91f4240ad14000623cbdff",
+      "id": "0x566736fa1dc4201ae0684cb5ef0f58e164771286865bef29b31dfe80114b151c",
       "kind": "normal",
       "codeWidth": 1,
       "layout": [
@@ -86,10 +86,10 @@
         ]
       ],
       "source": "slot-assignment",
-      "sourceName": "Normal.sol",
-      "contractName": "Normal",
-      "structName": "NormalStorage",
-      "virtualPath": "evmole.normal",
+      "sourceName": "Canonical.sol",
+      "contractName": "Case1Canonical",
+      "structName": "Storage",
+      "virtualPath": "compose.validation.case1.normal",
       "parentVirtualPath": null,
       "diamondName": null
     }

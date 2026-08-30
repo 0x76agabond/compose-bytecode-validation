@@ -1,0 +1,119 @@
+{
+  "records": [
+    {
+      "id": "0x32e7b22d4b43082cc95751e9cb25c6565050d5e72bab1261f9780cef61b81c08",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0x17",
+        "0x2f"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0x17",
+        "0x2f"
+      ],
+      "slots": [
+        [
+          64
+        ],
+        [
+          256
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "Canonical.sol",
+      "contractName": "Case3Canonical",
+      "structName": "KeySource",
+      "virtualPath": "compose.validation.case3.key-source",
+      "parentVirtualPath": null,
+      "diamondName": null
+    },
+    {
+      "id": "0x073438bbac482e6e274b4471f5902c3b5ed79251a03a023be4dad26d6f2ecb69",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf1",
+        "0x17",
+        "0x2f",
+        "0xff",
+        "0xf2",
+        "0x10",
+        "0xff",
+        "0xf2",
+        "0x11",
+        "0xff",
+        "0x01",
+        "0xf3",
+        "0x01",
+        "0x05",
+        "0x01",
+        "0xff",
+        "0xf3",
+        "0x01",
+        "0x04",
+        "0x10",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf1",
+        "0x17",
+        "0x2f",
+        "0xff",
+        "0xf2",
+        "0x10",
+        "0xff",
+        "0xf2",
+        "0x11",
+        "0xff",
+        "0x01",
+        "0xf3",
+        "0x01",
+        "0x05",
+        "0x01",
+        "0xff",
+        "0xf3",
+        "0x01",
+        "0x04",
+        "0x10",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ],
+        [
+          256
+        ],
+        [
+          256
+        ],
+        [
+          8
+        ],
+        [
+          8,
+          8,
+          8,
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "Canonical.sol",
+      "contractName": "Case3Canonical",
+      "structName": "Storage",
+      "virtualPath": "compose.validation.case3.storage-key",
+      "parentVirtualPath": null,
+      "diamondName": null
+    }
+  ]
+}

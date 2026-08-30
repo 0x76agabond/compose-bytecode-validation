@@ -1,0 +1,34 @@
+{
+  "records": [
+    {
+      "id": "0x31d2e132fdf61c95bc42a84b8bb744296c058ebc0dc2480650ef38b0f05d9d66",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf1",
+        "0x53",
+        "0x03",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf1",
+        "0x53",
+        "0x03",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "Canonical.sol",
+      "contractName": "Case6Canonical",
+      "structName": "Storage",
+      "virtualPath": "compose.validation.case6.mapping-value",
+      "parentVirtualPath": null,
+      "diamondName": null
+    }
+  ]
+}
