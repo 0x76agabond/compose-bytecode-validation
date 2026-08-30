@@ -1,0 +1,167 @@
+{
+  "functions": [
+    {
+      "selector": "41f654f7",
+      "bytecodeOffset": 56,
+      "dispatch": "abi",
+      "arguments": "",
+      "stateMutability": "view"
+    },
+    {
+      "selector": "5259ab8f",
+      "bytecodeOffset": 91,
+      "dispatch": "abi",
+      "arguments": "",
+      "stateMutability": "view"
+    }
+  ],
+  "storage": [
+    {
+      "slot": "17feff0e9a1485a11607e92a5434a581051cfa49116444d492491531d2cc6e59",
+      "offset": 0,
+      "type": "mapping(uint256 => uint128)",
+      "reads": [
+        "5259ab8f"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "17feff0e9a1485a11607e92a5434a581051cfa49116444d492491531d2cc6e5a",
+      "offset": 0,
+      "type": "uint64[]",
+      "reads": [
+        "5259ab8f"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "47a837d939b4345a96e6ea43a93fb3610a529e04ce47ac93a6d722a14e94b798",
+      "offset": 0,
+      "type": "uint64",
+      "reads": [
+        "41f654f7"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "47a837d939b4345a96e6ea43a93fb3610a529e04ce47ac93a6d722a14e94b799",
+      "offset": 0,
+      "type": "uint256",
+      "reads": [
+        "41f654f7"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "5fa10c346cebccf4b98feceb76ad4ed708f0edf02d186ac9d246452eac6e9983",
+      "offset": 0,
+      "type": "mapping(uint256 => uint256)",
+      "reads": [
+        "41f654f7"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "5fa10c346cebccf4b98feceb76ad4ed708f0edf02d186ac9d246452eac6e9984",
+      "offset": 0,
+      "type": "uint256[]",
+      "reads": [
+        "41f654f7"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "5fa10c346cebccf4b98feceb76ad4ed708f0edf02d186ac9d246452eac6e9985",
+      "offset": 0,
+      "type": "uint256[]",
+      "reads": [
+        "41f654f7"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "5fa10c346cebccf4b98feceb76ad4ed708f0edf02d186ac9d246452eac6e9986",
+      "offset": 0,
+      "type": "bool",
+      "reads": [
+        "41f654f7"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "5fa10c346cebccf4b98feceb76ad4ed708f0edf02d186ac9d246452eac6e9987",
+      "offset": 0,
+      "type": "uint256",
+      "reads": [
+        "41f654f7"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "5fa10c346cebccf4b98feceb76ad4ed708f0edf02d186ac9d246452eac6e9987",
+      "offset": 1,
+      "type": "bool",
+      "reads": [
+        "41f654f7"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "5fa10c346cebccf4b98feceb76ad4ed708f0edf02d186ac9d246452eac6e9988",
+      "offset": 0,
+      "type": "uint256",
+      "reads": [
+        "41f654f7"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "5fa10c346cebccf4b98feceb76ad4ed708f0edf02d186ac9d246452eac6e9988",
+      "offset": 1,
+      "type": "uint8",
+      "reads": [
+        "41f654f7"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "a797a548d0b41eb4f63e14e9dcdc633fab4eb4b331c8e0f21b9c990f5596007f",
+      "offset": 0,
+      "type": "uint8",
+      "reads": [
+        "5259ab8f"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "a797a548d0b41eb4f63e14e9dcdc633fab4eb4b331c8e0f21b9c990f5596007f",
+      "offset": 1,
+      "type": "uint128",
+      "reads": [
+        "5259ab8f"
+      ],
+      "writes": []
+    }
+  ],
+  "transientStorage": [],
+  "metadata": {
+    "bytecodeOffset": 1328,
+    "cborLength": 51,
+    "entries": [
+      {
+        "key": "ipfs",
+        "value": {
+          "type": "bytes",
+          "value": "1220d5575fc14d7a8cdcdecd26ed80f31ddcf49cd1470892065abce661dd5d7b9db9"
+        }
+      },
+      {
+        "key": "solc",
+        "value": {
+          "type": "bytes",
+          "value": "00081e"
+        }
+      }
+    ]
+  }
+}

@@ -1026,6 +1026,46 @@ struct DomainSlotRecords {
 pub(crate) struct StorageLayouts {
     pub storage: Vec<StorageRecord>,
     pub transient_storage: Vec<StorageRecord>,
+    pub evidence: Vec<StorageEvidence>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct StorageEvidence {
+    pub domain: &'static str,
+    pub slot: Option<Slot>,
+    pub symbolic_path: String,
+    pub offset: u8,
+    pub inferred_type: String,
+    pub score: usize,
+    pub is_write: bool,
+    pub selector: Selector,
+    pub mask: Option<String>,
+}
+
+fn collect_storage_evidence(
+    evidence: &mut Vec<StorageEvidence>,
+    selector: Selector,
+    loaded: &SlotHashMap,
+) {
+    for elements in loaded.values() {
+        for element in elements {
+            let element = element.borrow();
+            evidence.push(StorageEvidence {
+                domain: match element.domain {
+                    StorageDomain::Persistent => "persistent",
+                    StorageDomain::Transient => "transient",
+                },
+                slot: element.slot,
+                symbolic_path: format!("{:?}", element.slot_expr),
+                offset: element.rshift,
+                inferred_type: format!("{:?}", element.stype),
+                score: element.stype.get_score(),
+                is_write: element.is_write,
+                selector,
+                mask: element.last_and.map(|mask| format!("{mask:?}")),
+            });
+        }
+    }
 }
 
 fn collect_slot_records(records: &mut DomainSlotRecords, selector: Selector, loaded: SlotHashMap) {
@@ -1160,6 +1200,7 @@ where
     };
 
     let mut slot_records = DomainSlotRecords::default();
+    let mut evidence = Vec::new();
 
     let functions: Vec<_> = functions.into_iter().collect();
     let selectors: BTreeSet<Selector> = functions.iter().map(|(sel, _, _)| *sel).collect();
@@ -1172,10 +1213,12 @@ where
     for &(selector, _, ref arguments) in &functions {
         let loaded =
             analyze_one_function(code, selector, arguments.as_ref(), false, real_gas_limit);
+        collect_storage_evidence(&mut evidence, selector, &loaded);
         collect_slot_records(&mut slot_records, selector, loaded);
     }
 
     let fallback = analyze_one_function(code, fallback_selector, &[], true, real_gas_limit);
+    collect_storage_evidence(&mut evidence, fallback_selector, &fallback);
     collect_slot_records(&mut slot_records, fallback_selector, fallback);
 
     StorageLayouts {
@@ -1185,5 +1228,6 @@ where
             fallback_selector,
             "transient",
         ),
+        evidence,
     }
 }

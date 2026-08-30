@@ -1,0 +1,156 @@
+{
+  "records": [
+    {
+      "id": "0x4880f2fa48089f63f22dd452938f4d88d372376b1e4adfdbe5dca3a3f90731a4",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf1",
+        "0x53",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf1",
+        "0x53",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "ArrayMappingStruct.sol",
+      "contractName": "ArrayMappingStruct",
+      "structName": "ArrayMappingStructStorage",
+      "virtualPath": "evmole.mapping.struct.array.bool",
+      "parentVirtualPath": null,
+      "diamondName": null
+    },
+    {
+      "id": "0x1dbde32d1ca41b214515a24be22e636e27705c8102df7e87037319d799551288",
+      "parentPath": "evmole.mapping.struct.array.bool",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf2",
+        "0x2f",
+        "0xff",
+        "0x03",
+        "0x01"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf2",
+        "0x2f",
+        "0xff",
+        "0x03",
+        "0x01"
+      ],
+      "slots": [
+        [
+          256
+        ],
+        [
+          160,
+          8
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "ArrayMappingStruct.sol",
+      "contractName": "ArrayMappingStruct",
+      "structName": "ArrayMappingStructStorage",
+      "virtualPath": "evmole.mapping.struct.array.bool.0",
+      "parentVirtualPath": "evmole.mapping.struct.array.bool",
+      "diamondName": null
+    },
+    {
+      "id": "0x1379dcff62b7932c5a69c2ae9f220db8217d94e02daa214464dc75a5c97c493a",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf1",
+        "0x53",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf1",
+        "0x53",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "ArrayMappingStruct.sol",
+      "contractName": "ArrayMappingStruct",
+      "structName": "OnlyArrayStorage",
+      "virtualPath": "evmole.mapping.struct.only.array",
+      "parentVirtualPath": null,
+      "diamondName": null
+    },
+    {
+      "id": "0xf28d613c789678786a421de02e20b88f0fd6848422bcce09d453c01dc239b2ba",
+      "parentPath": "evmole.mapping.struct.only.array",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf2",
+        "0x2f",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf2",
+        "0x2f",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "ArrayMappingStruct.sol",
+      "contractName": "ArrayMappingStruct",
+      "structName": "OnlyArrayStorage",
+      "virtualPath": "evmole.mapping.struct.only.array.0",
+      "parentVirtualPath": "evmole.mapping.struct.only.array",
+      "diamondName": null
+    },
+    {
+      "id": "0xd5ab4b76113438eb4f246f1a19a7eacab39b6feb34d72c6a605c9ea19636a05a",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf1",
+        "0x53",
+        "0x03",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf1",
+        "0x53",
+        "0x03",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "ArrayMappingStruct.sol",
+      "contractName": "ArrayMappingStruct",
+      "structName": "RawAddressStorage",
+      "virtualPath": "evmole.mapping.address",
+      "parentVirtualPath": null,
+      "diamondName": null
+    }
+  ]
+}

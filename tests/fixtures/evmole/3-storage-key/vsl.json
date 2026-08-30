@@ -1,0 +1,185 @@
+{
+  "records": [
+    {
+      "id": "0x47a837d939b4345a96e6ea43a93fb3610a529e04ce47ac93a6d722a14e94b798",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0x17",
+        "0x2f"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0x17",
+        "0x2f"
+      ],
+      "slots": [
+        [
+          64
+        ],
+        [
+          256
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "StorageKey.sol",
+      "contractName": "StorageKey",
+      "structName": "RootStorage",
+      "virtualPath": "evmole.storage.key.root",
+      "parentVirtualPath": null,
+      "diamondName": null
+    },
+    {
+      "id": "0x5fa10c346cebccf4b98feceb76ad4ed708f0edf02d186ac9d246452eac6e9983",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf1",
+        "0x17",
+        "0x2f",
+        "0xff",
+        "0xf2",
+        "0x10",
+        "0xff",
+        "0xf2",
+        "0x11",
+        "0xff",
+        "0x01",
+        "0xf3",
+        "0x01",
+        "0x05",
+        "0x01",
+        "0xff",
+        "0xf3",
+        "0x01",
+        "0x04",
+        "0x10",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf1",
+        "0x17",
+        "0x2f",
+        "0xff",
+        "0xf2",
+        "0x10",
+        "0xff",
+        "0xf2",
+        "0x11",
+        "0xff",
+        "0x01",
+        "0xf3",
+        "0x01",
+        "0x05",
+        "0x01",
+        "0xff",
+        "0xf3",
+        "0x01",
+        "0x04",
+        "0x10",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ],
+        [
+          256
+        ],
+        [
+          256
+        ],
+        [
+          8
+        ],
+        [
+          8,
+          8,
+          8,
+          8,
+          8
+        ],
+        [
+          8,
+          8,
+          8,
+          8
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "StorageKey.sol",
+      "contractName": "StorageKey",
+      "structName": "StorageKeyData",
+      "virtualPath": "evmole.storage.key",
+      "parentVirtualPath": null,
+      "diamondName": null
+    },
+    {
+      "id": "0xa797a548d0b41eb4f63e14e9dcdc633fab4eb4b331c8e0f21b9c990f5596007f",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0x10",
+        "0x1f"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0x10",
+        "0x1f"
+      ],
+      "slots": [
+        [
+          8,
+          128
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "StorageKey.sol",
+      "contractName": "StorageKey",
+      "structName": "RootStorage2",
+      "virtualPath": "evmole.storage.key.root.2",
+      "parentVirtualPath": null,
+      "diamondName": null
+    },
+    {
+      "id": "0x17feff0e9a1485a11607e92a5434a581051cfa49116444d492491531d2cc6e59",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf1",
+        "0x10",
+        "0x1f",
+        "0xff",
+        "0xf2",
+        "0x17",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf1",
+        "0x10",
+        "0x1f",
+        "0xff",
+        "0xf2",
+        "0x17",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ],
+        [
+          256
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "StorageKey.sol",
+      "contractName": "StorageKey",
+      "structName": "StorageKeyData2",
+      "virtualPath": "evmole.storage.key.2",
+      "parentVirtualPath": null,
+      "diamondName": null
+    }
+  ]
+}

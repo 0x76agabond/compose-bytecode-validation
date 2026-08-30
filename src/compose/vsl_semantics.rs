@@ -1,0 +1,473 @@
+use super::types::VirtualStorageLayoutRecord;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SemanticCompatibility {
+    Compatible,
+    KeyMismatch,
+    Contradiction,
+    Uncertain,
+}
+
+pub(crate) fn compare_semantic_types(inferred: &str, expected: &str) -> SemanticCompatibility {
+    let inferred = normalize(inferred);
+    let expected = normalize(expected);
+    if inferred == expected {
+        return SemanticCompatibility::Compatible;
+    }
+    if inferred == "unknown" || expected == "unknown" || expected == "function-internal" {
+        return SemanticCompatibility::Uncertain;
+    }
+    if let (Some((inferred_key, inferred_value)), Some((expected_key, expected_value))) =
+        (mapping_parts(&inferred), mapping_parts(&expected))
+    {
+        return match compare_semantic_types(&inferred_value, &expected_value) {
+            SemanticCompatibility::Contradiction => SemanticCompatibility::Contradiction,
+            SemanticCompatibility::Uncertain => SemanticCompatibility::Uncertain,
+            SemanticCompatibility::Compatible | SemanticCompatibility::KeyMismatch => {
+                if inferred_key == expected_key {
+                    SemanticCompatibility::Compatible
+                } else {
+                    SemanticCompatibility::KeyMismatch
+                }
+            }
+        };
+    }
+    if let (Some(inferred_element), Some(expected_element)) =
+        (array_element(&inferred), array_element(&expected))
+    {
+        return compare_semantic_types(&inferred_element, &expected_element);
+    }
+    if expected.starts_with("virtual-struct(") {
+        return SemanticCompatibility::Contradiction;
+    }
+    SemanticCompatibility::Contradiction
+}
+
+pub(crate) fn is_virtual_struct_collapse(inferred: &str, expected: &str) -> bool {
+    (inferred.starts_with("mapping(") || inferred.ends_with(']'))
+        && expected.contains("virtual-struct(")
+}
+
+fn normalize(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
+fn mapping_parts(value: &str) -> Option<(String, String)> {
+    let body = value.strip_prefix("mapping(")?.strip_suffix(')')?;
+    let mut depth = 0_i32;
+    for (index, window) in body.as_bytes().windows(2).enumerate() {
+        match window[0] {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0 && window == b"=>" {
+            return Some((body[..index].to_owned(), body[index + 2..].to_owned()));
+        }
+    }
+    None
+}
+
+fn array_element(value: &str) -> Option<String> {
+    if let Some(element) = value.strip_suffix("[]") {
+        return Some(element.to_owned());
+    }
+    let end = value.strip_suffix(']')?;
+    let bracket = end.rfind('[')?;
+    end[bracket + 1..]
+        .chars()
+        .all(|character| character.is_ascii_digit())
+        .then(|| end[..bracket].to_owned())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum VslType {
+    Scalar {
+        name: String,
+        width: Option<u16>,
+    },
+    Mapping(Box<VslType>, Box<VslType>),
+    DynamicArray(Box<VslType>),
+    FixedArray {
+        length: usize,
+        element: Box<VslType>,
+    },
+    Struct(Vec<VslType>),
+    VirtualStruct,
+    Unknown,
+}
+
+impl VslType {
+    fn display(&self) -> String {
+        match self {
+            Self::Scalar { name, .. } => name.clone(),
+            Self::Mapping(key, value) => {
+                format!("mapping({} => {})", key.display(), value.display())
+            }
+            Self::DynamicArray(element) => format!("{}[]", element.display()),
+            Self::FixedArray { length, element } => format!("{}[{length}]", element.display()),
+            Self::Struct(_) => "struct".to_owned(),
+            Self::VirtualStruct => "virtual-struct".to_owned(),
+            Self::Unknown => "unknown".to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SemanticField {
+    pub slot_index: usize,
+    pub offset: u8,
+    pub ty: VslType,
+}
+
+pub(crate) fn expected_type_at(
+    record: &VirtualStorageLayoutRecord,
+    all_records: &[VirtualStorageLayoutRecord],
+    slot_index: usize,
+    offset: u8,
+) -> Option<String> {
+    semantic_fields(record, all_records)
+        .into_iter()
+        .find(|field| field.slot_index == slot_index && field.offset == offset)
+        .map(|field| field.ty.display())
+}
+
+fn semantic_fields(
+    record: &VirtualStorageLayoutRecord,
+    all_records: &[VirtualStorageLayoutRecord],
+) -> Vec<SemanticField> {
+    let tokens = record
+        .layout
+        .iter()
+        .filter_map(|token| parse_token(token))
+        .collect::<Vec<_>>();
+    let mut index = 0;
+    let mut types = Vec::new();
+    while index < tokens.len() {
+        let Some((ty, next, _)) = parse_type(&tokens, index) else {
+            break;
+        };
+        types.push(ty);
+        index = next;
+    }
+
+    let mut cursor = LayoutCursor::default();
+    let mut fields = Vec::new();
+    for ty in &types {
+        place_type(ty, &mut cursor, &mut fields, record, all_records);
+    }
+    fields
+}
+
+#[derive(Default)]
+struct LayoutCursor {
+    slot_index: usize,
+    bit_offset: u16,
+}
+
+fn place_type(
+    ty: &VslType,
+    cursor: &mut LayoutCursor,
+    fields: &mut Vec<SemanticField>,
+    record: &VirtualStorageLayoutRecord,
+    all_records: &[VirtualStorageLayoutRecord],
+) {
+    match ty {
+        VslType::Scalar {
+            width: Some(width), ..
+        } if *width < 256 => {
+            if cursor.bit_offset.saturating_add(*width) > 256 {
+                cursor.slot_index += 1;
+                cursor.bit_offset = 0;
+            }
+            fields.push(SemanticField {
+                slot_index: cursor.slot_index,
+                offset: (cursor.bit_offset / 8) as u8,
+                ty: ty.clone(),
+            });
+            cursor.bit_offset += *width;
+            if cursor.bit_offset == 256 {
+                cursor.slot_index += 1;
+                cursor.bit_offset = 0;
+            }
+        }
+        VslType::Struct(members) => {
+            align(cursor);
+            for member in members {
+                place_type(member, cursor, fields, record, all_records);
+            }
+            align(cursor);
+        }
+        VslType::FixedArray { length, element } => {
+            align(cursor);
+            for _ in 0..*length {
+                place_type(element, cursor, fields, record, all_records);
+            }
+            align(cursor);
+        }
+        _ => {
+            align(cursor);
+            let slot_index = cursor.slot_index;
+            let mut resolved = ty.clone();
+            resolve_virtual_struct(&mut resolved, record, all_records, slot_index);
+            fields.push(SemanticField {
+                slot_index,
+                offset: 0,
+                ty: resolved,
+            });
+            cursor.slot_index += 1;
+        }
+    }
+}
+
+fn align(cursor: &mut LayoutCursor) {
+    if cursor.bit_offset != 0 {
+        cursor.slot_index += 1;
+        cursor.bit_offset = 0;
+    }
+}
+
+fn resolve_virtual_struct(
+    ty: &mut VslType,
+    record: &VirtualStorageLayoutRecord,
+    all_records: &[VirtualStorageLayoutRecord],
+    slot_index: usize,
+) {
+    match ty {
+        VslType::Mapping(_, value) | VslType::DynamicArray(value) => {
+            resolve_virtual_struct(value, record, all_records, slot_index);
+        }
+        VslType::FixedArray { element, .. } => {
+            resolve_virtual_struct(element, record, all_records, slot_index);
+        }
+        VslType::VirtualStruct => {
+            let expected_path = format!("{}.{}", record.virtual_path, slot_index);
+            if all_records
+                .iter()
+                .any(|child| child.virtual_path == expected_path)
+            {
+                *ty = VslType::Scalar {
+                    name: format!("virtual-struct({expected_path})"),
+                    width: None,
+                };
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_type(tokens: &[u8], index: usize) -> Option<(VslType, usize, bool)> {
+    let token = *tokens.get(index)?;
+    let scalar = scalar(token);
+    if scalar != VslType::Unknown {
+        return Some((scalar, index + 1, false));
+    }
+
+    match token {
+        0xf4 => parse_struct(tokens, index + 1),
+        0xf1 => parse_mapping(tokens, index + 1),
+        0xf2 => parse_dynamic_array(tokens, index + 1),
+        0xf3 => parse_fixed_array(tokens, index + 1),
+        _ => Some((VslType::Unknown, index + 1, false)),
+    }
+}
+
+fn parse_struct(tokens: &[u8], mut index: usize) -> Option<(VslType, usize, bool)> {
+    let mut members = Vec::new();
+    while *tokens.get(index)? != 0xff {
+        let (member, next, _) = parse_type(tokens, index)?;
+        members.push(member);
+        index = next;
+    }
+    Some((VslType::Struct(members), index + 1, true))
+}
+
+fn parse_mapping(tokens: &[u8], index: usize) -> Option<(VslType, usize, bool)> {
+    let (key, mut next, _) = parse_type(tokens, index)?;
+    if *tokens.get(next)? == 0xff {
+        return Some((
+            VslType::Mapping(Box::new(key), Box::new(VslType::VirtualStruct)),
+            next + 1,
+            true,
+        ));
+    }
+    let (value, value_next, value_closed) = parse_type(tokens, next)?;
+    next = value_next;
+    if !value_closed {
+        expect_end(tokens, &mut next)?;
+    }
+    Some((VslType::Mapping(Box::new(key), Box::new(value)), next, true))
+}
+
+fn parse_dynamic_array(tokens: &[u8], index: usize) -> Option<(VslType, usize, bool)> {
+    if *tokens.get(index)? == 0xff {
+        return Some((
+            VslType::DynamicArray(Box::new(VslType::VirtualStruct)),
+            index + 1,
+            true,
+        ));
+    }
+    let (element, mut next, element_closed) = parse_type(tokens, index)?;
+    if !element_closed {
+        expect_end(tokens, &mut next)?;
+    }
+    Some((VslType::DynamicArray(Box::new(element)), next, true))
+}
+
+fn parse_fixed_array(tokens: &[u8], index: usize) -> Option<(VslType, usize, bool)> {
+    let byte_count = usize::from(*tokens.get(index)?);
+    let length_end = index.checked_add(1 + byte_count)?;
+    let length = tokens
+        .get(index + 1..length_end)?
+        .iter()
+        .fold(0_usize, |value, byte| (value << 8) | usize::from(*byte));
+    if *tokens.get(length_end)? == 0xff {
+        return Some((
+            VslType::FixedArray {
+                length,
+                element: Box::new(VslType::VirtualStruct),
+            },
+            length_end + 1,
+            true,
+        ));
+    }
+    let (element, mut next, element_closed) = parse_type(tokens, length_end)?;
+    if !element_closed {
+        expect_end(tokens, &mut next)?;
+    }
+    Some((
+        VslType::FixedArray {
+            length,
+            element: Box::new(element),
+        },
+        next,
+        true,
+    ))
+}
+
+fn expect_end(tokens: &[u8], index: &mut usize) -> Option<()> {
+    (*tokens.get(*index)? == 0xff).then_some(())?;
+    *index += 1;
+    Some(())
+}
+
+fn scalar(token: u8) -> VslType {
+    let scalar = |name: &str, width: u16| VslType::Scalar {
+        name: name.to_owned(),
+        width: Some(width),
+    };
+    match token {
+        0x01 => scalar("bool", 8),
+        0x02 => scalar("enum", 8),
+        0x03 => scalar("address", 160),
+        0x10..=0x2f => scalar(
+            &format!("uint{}", (u16::from(token) - 0x10 + 1) * 8),
+            (u16::from(token) - 0x10 + 1) * 8,
+        ),
+        0x30..=0x4f => scalar(
+            &format!("int{}", (u16::from(token) - 0x30 + 1) * 8),
+            (u16::from(token) - 0x30 + 1) * 8,
+        ),
+        0x50..=0x6f => scalar(
+            &format!("bytes{}", u16::from(token) - 0x50 + 1),
+            (u16::from(token) - 0x50 + 1) * 8,
+        ),
+        0x70 => scalar("function-external", 192),
+        0x71 => VslType::Scalar {
+            name: "function-internal".to_owned(),
+            width: None,
+        },
+        0x72 => VslType::Scalar {
+            name: "bytes".to_owned(),
+            width: Some(256),
+        },
+        0x73 => VslType::Scalar {
+            name: "string".to_owned(),
+            width: Some(256),
+        },
+        0xfe => VslType::Unknown,
+        _ => VslType::Unknown,
+    }
+}
+
+fn parse_token(token: &str) -> Option<u8> {
+    u8::from_str_radix(token.trim_start_matches("0x"), 16).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SemanticCompatibility, VslType, compare_semantic_types, expected_type_at};
+    use crate::compose::{
+        VirtualStorageLayoutKind, VirtualStorageLayoutRecord, VirtualStorageLayoutSource,
+    };
+
+    fn record(layout: &[&str]) -> VirtualStorageLayoutRecord {
+        VirtualStorageLayoutRecord {
+            id: "0x01".to_owned(),
+            virtual_path: "fixture".to_owned(),
+            parent_virtual_path: None,
+            kind: VirtualStorageLayoutKind::Normal,
+            code_width: 1,
+            layout: layout.iter().map(|item| (*item).to_owned()).collect(),
+            serialized_layout: Vec::new(),
+            slots: vec![vec![8, 160], vec![256]],
+            source: VirtualStorageLayoutSource::Erc8042,
+            source_name: "Fixture.sol".to_owned(),
+            contract_name: "Fixture".to_owned(),
+            struct_name: None,
+            diamond_name: None,
+        }
+    }
+
+    #[test]
+    fn maps_packed_scalars_to_semantic_types() {
+        let record = record(&["0x01", "0x03", "0xf1", "0x03", "0x2f", "0xff"]);
+        assert_eq!(
+            expected_type_at(&record, &[], 0, 0),
+            Some("bool".to_owned())
+        );
+        assert_eq!(
+            expected_type_at(&record, &[], 0, 1),
+            Some("address".to_owned())
+        );
+        assert_eq!(
+            expected_type_at(&record, &[], 1, 0),
+            Some("mapping(address => uint256)".to_owned())
+        );
+    }
+
+    #[test]
+    fn keeps_virtual_struct_as_semantic_marker() {
+        assert_eq!(VslType::VirtualStruct.display(), "virtual-struct");
+    }
+
+    #[test]
+    fn links_container_children_to_their_virtual_path() {
+        let root = record(&["0xf1", "0x53", "0xff"]);
+        let mut child = record(&["0x2f", "0x01", "0x03"]);
+        child.id = "0x02".to_owned();
+        child.virtual_path = "fixture.0".to_owned();
+        assert_eq!(
+            expected_type_at(&root, &[root.clone(), child], 0, 0),
+            Some("mapping(bytes4 => virtual-struct(fixture.0))".to_owned())
+        );
+    }
+
+    #[test]
+    fn accepts_mapping_key_noise_but_not_value_shape_changes() {
+        assert_eq!(
+            compare_semantic_types("mapping(uint256 => uint256)", "mapping(address => uint256)"),
+            SemanticCompatibility::KeyMismatch
+        );
+        assert_eq!(
+            compare_semantic_types(
+                "mapping(bytes4 => address)",
+                "mapping(bytes4 => virtual-struct(fixture.0))"
+            ),
+            SemanticCompatibility::Contradiction
+        );
+    }
+}

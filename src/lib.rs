@@ -12,6 +12,7 @@ pub use storage::StorageRecord;
 
 mod arguments;
 mod collections;
+pub mod compose;
 mod contract_info;
 pub mod control_flow_graph;
 mod evm;

@@ -1,0 +1,100 @@
+{
+  "functions": [
+    {
+      "selector": "69b4b73f",
+      "bytecodeOffset": 78,
+      "dispatch": "abi",
+      "arguments": "uint256",
+      "stateMutability": "view"
+    },
+    {
+      "selector": "ae5da32b",
+      "bytecodeOffset": 126,
+      "dispatch": "abi",
+      "arguments": "uint256",
+      "stateMutability": "view"
+    },
+    {
+      "selector": "cdab1944",
+      "bytecodeOffset": 176,
+      "dispatch": "abi",
+      "arguments": "uint256,bytes4",
+      "stateMutability": "view"
+    },
+    {
+      "selector": "e55e51ab",
+      "bytecodeOffset": 229,
+      "dispatch": "abi",
+      "arguments": "uint256",
+      "stateMutability": "view"
+    }
+  ],
+  "storage": [
+    {
+      "slot": "1a37ac6727a95846d2ae46e80757a300b613a97414502710e81899825de32b28",
+      "offset": 0,
+      "type": "address[]",
+      "reads": [
+        "cdab1944"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "1a37ac6727a95846d2ae46e80757a300b613a97414502710e81899825de32b29",
+      "offset": 0,
+      "type": "mapping(bytes4 => address)",
+      "reads": [
+        "cdab1944"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "2884710caa4ed73e862b690472e6f0f1affe8fc004c824a08d6f00b9f0070206",
+      "offset": 0,
+      "type": "address[]",
+      "reads": [
+        "69b4b73f"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "364fa277f2f237e94e11d3949c88e7821d81de6e886eeb00951ea97ff12c02ea",
+      "offset": 0,
+      "type": "address[]",
+      "reads": [
+        "ae5da32b"
+      ],
+      "writes": []
+    },
+    {
+      "slot": "a0abcb057a5fe9691ee6858d8e0a730d3739c65f1e3e600a06d443db6c43a56a",
+      "offset": 0,
+      "type": "address[]",
+      "reads": [
+        "e55e51ab"
+      ],
+      "writes": []
+    }
+  ],
+  "transientStorage": [],
+  "metadata": {
+    "bytecodeOffset": 1730,
+    "cborLength": 51,
+    "entries": [
+      {
+        "key": "ipfs",
+        "value": {
+          "type": "bytes",
+          "value": "12202bb8b81da056f107ac05119e3a2672b584c6923db26f3c6a254620c904dc6e2e"
+        }
+      },
+      {
+        "key": "solc",
+        "value": {
+          "type": "bytes",
+          "value": "00081e"
+        }
+      }
+    ]
+  }
+}
