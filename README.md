@@ -74,8 +74,8 @@ against the canonical VSL.
 | Fixture | Challenge | Current evidence |
 | --- | --- | --- |
 | `1-normal` | Packed nested-struct width shifts | Canonical writes validate; incompatible slot shifts produce collisions. |
-| `2-constant-key` | Constant mapping keys and packed dynamic-array width | Mapping writes validate; element width remains scoped uncertainty. |
-| `3-storage-key` | Storage-derived mapping keys and dynamic/fixed indexes | Roots and plain values validate; packed indexed writes remain scoped uncertainty. |
+| `2-constant-key` | Constant mapping keys and packed dynamic-array width | VSL anchors constant keys; canonical array writes validate and width mismatch collides. |
+| `3-storage-key` | Storage-derived mapping keys and dynamic/fixed indexes | VSL anchors the loaded `uint64` key; dynamic and fixed packed element mismatches collide. |
 | `4-mapping-struct` | Reordered packed members inside a mapping value | Root is known; member path reconstruction remains scoped uncertainty. |
 | `5-array-struct` | Reordered struct arrays and scalar-array replacement | Root is known; array child path reconstruction remains scoped uncertainty. |
 | `6-array-mapping-struct` | Mapping-to-address versus mapping-to-array-struct | Canonical mapping validates and both incompatible container shapes collide. |
@@ -92,13 +92,13 @@ families:
 
 | Fixture | Variant | Collisions | Validated | Scoped uncertainty |
 | --- | --- | ---: | ---: | ---: |
-| `1-normal` | canonical | 0 | 7 | 4 |
+| `1-normal` | canonical | 0 | 8 | 3 |
 | `1-normal` | incompatible packed width | 2 | 1 | 2 |
-| `2-constant-key` | canonical | 0 | 3 | 1 |
-| `2-constant-key` | incompatible dynamic width | 0 | 3 | 1 |
-| `3-storage-key` | canonical | 0 | 4 | 4 |
-| `3-storage-key` | incompatible dynamic width | 0 | 0 | 2 |
-| `3-storage-key` | incompatible fixed width | 0 | 0 | 2 |
+| `2-constant-key` | canonical | 0 | 4 | 0 |
+| `2-constant-key` | incompatible dynamic width | 1 | 3 | 0 |
+| `3-storage-key` | canonical | 0 | 8 | 0 |
+| `3-storage-key` | incompatible dynamic width | 2 | 0 | 0 |
+| `3-storage-key` | incompatible fixed width | 2 | 0 | 0 |
 | `4-mapping-struct` | canonical | 0 | 0 | 3 |
 | `4-mapping-struct` | incompatible reordered members | 0 | 0 | 3 |
 | `5-array-struct` | canonical | 0 | 0 | 3 |
@@ -113,11 +113,14 @@ engine reliably tracks root slots, static slot shifts, selectors, program
 counters, constant mapping keys, and storage-derived mapping keys. It also
 proves container-shape contradictions in case 6.
 
-The next implementation target is symbolic child-path reconstruction. Packed
-dynamic/fixed array element widths and struct members inside mappings or arrays
-currently retain a concrete root but not enough member/index/stride information
-to challenge the corresponding VSL child. Cases 2 through 5 therefore remain
-scoped uncertainty where the current engine cannot prove a contradiction.
+VSL-derived trace hints now recover mapping key types for constant and
+storage-loaded keys. Packed read-modify-write values retain their ABI type
+through dynamic index shifting, including Solidity's boolean normalization.
+
+The next implementation target is symbolic child-path reconstruction for
+struct members inside mappings or arrays. Cases 4 and 5 retain a concrete root
+but not enough member/index/stride information to challenge the corresponding
+VSL child, so they remain scoped uncertainty.
 
 ## Run the PoC
 

@@ -7,6 +7,7 @@ struct Variant {
     source: &'static str,
     contract: &'static str,
     canonical: bool,
+    must_collide: bool,
 }
 
 struct Case {
@@ -25,12 +26,14 @@ const CASES: &[Case] = &[
                 source: "Canonical.sol",
                 contract: "Case1Canonical",
                 canonical: true,
+                must_collide: false,
             },
             Variant {
                 name: "incompatible-packed-width",
                 source: "Incompatible.sol",
                 contract: "Case1Incompatible",
                 canonical: false,
+                must_collide: false,
             },
         ],
     },
@@ -43,12 +46,14 @@ const CASES: &[Case] = &[
                 source: "Canonical.sol",
                 contract: "Case2Canonical",
                 canonical: true,
+                must_collide: false,
             },
             Variant {
                 name: "incompatible-dynamic-width",
                 source: "Incompatible.sol",
                 contract: "Case2Incompatible",
                 canonical: false,
+                must_collide: true,
             },
         ],
     },
@@ -61,18 +66,21 @@ const CASES: &[Case] = &[
                 source: "Canonical.sol",
                 contract: "Case3Canonical",
                 canonical: true,
+                must_collide: false,
             },
             Variant {
                 name: "incompatible-dynamic-widths",
                 source: "IncompatibleDynamic.sol",
                 contract: "Case3IncompatibleDynamic",
                 canonical: false,
+                must_collide: true,
             },
             Variant {
                 name: "incompatible-fixed-widths",
                 source: "IncompatibleFixed.sol",
                 contract: "Case3IncompatibleFixed",
                 canonical: false,
+                must_collide: true,
             },
         ],
     },
@@ -85,12 +93,14 @@ const CASES: &[Case] = &[
                 source: "Canonical.sol",
                 contract: "Case4Canonical",
                 canonical: true,
+                must_collide: false,
             },
             Variant {
                 name: "incompatible-member-order",
                 source: "Incompatible.sol",
                 contract: "Case4Incompatible",
                 canonical: false,
+                must_collide: false,
             },
         ],
     },
@@ -103,18 +113,21 @@ const CASES: &[Case] = &[
                 source: "Canonical.sol",
                 contract: "Case5Canonical",
                 canonical: true,
+                must_collide: false,
             },
             Variant {
                 name: "incompatible-member-order",
                 source: "IncompatibleReordered.sol",
                 contract: "Case5IncompatibleReordered",
                 canonical: false,
+                must_collide: false,
             },
             Variant {
                 name: "incompatible-address-array",
                 source: "IncompatibleAddress.sol",
                 contract: "Case5IncompatibleAddress",
                 canonical: false,
+                must_collide: false,
             },
         ],
     },
@@ -127,18 +140,21 @@ const CASES: &[Case] = &[
                 source: "Canonical.sol",
                 contract: "Case6Canonical",
                 canonical: true,
+                must_collide: false,
             },
             Variant {
                 name: "incompatible-mapping-array-struct",
                 source: "IncompatibleOnlyArray.sol",
                 contract: "Case6IncompatibleOnlyArray",
                 canonical: false,
+                must_collide: false,
             },
             Variant {
                 name: "incompatible-mapping-array-and-fields",
                 source: "IncompatibleArrayAndFields.sol",
                 contract: "Case6IncompatibleArrayAndFields",
                 canonical: false,
+                must_collide: false,
             },
         ],
     },
@@ -203,6 +219,13 @@ fn main() {
                     report.collisions.is_empty(),
                     "{} canonical bytecode contradicts its own VSL",
                     case.name
+                );
+            } else if variant.must_collide {
+                assert!(
+                    !report.collisions.is_empty(),
+                    "{} / {} must produce a proven collision",
+                    case.name,
+                    variant.name
                 );
             } else {
                 assert!(

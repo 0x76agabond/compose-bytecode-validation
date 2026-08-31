@@ -56,9 +56,54 @@ enum Label {
     Constant,
 
     Typed(DynSolType),
+    /// A typed value masked to a packed storage field before it is shifted
+    /// into a read-modify-write `SSTORE` value.
+    Packed(DynSolType),
     Loaded(Rc<RefCell<StorageElement>>),
     IsZero(Rc<RefCell<StorageElement>>),
     Keccak(u32, SlotExpr),
+}
+
+/// Optional type anchors supplied by a host that already knows source storage.
+///
+/// The generic storage tracer remains usable without these hints. They are
+/// intentionally limited to recovering mapping preimage types, not deciding
+/// whether a write is compatible with a layout.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct StorageTraceHints {
+    persistent_scalar_types: BTreeMap<Slot, DynSolType>,
+    persistent_mapping_key_types: BTreeMap<Slot, Vec<DynSolType>>,
+}
+
+impl StorageTraceHints {
+    pub(crate) fn insert_persistent_scalar_type(&mut self, slot: Slot, ty: DynSolType) {
+        self.persistent_scalar_types.insert(slot, ty);
+    }
+
+    pub(crate) fn insert_persistent_mapping_key_types(
+        &mut self,
+        slot: Slot,
+        key_types: Vec<DynSolType>,
+    ) {
+        self.persistent_mapping_key_types.insert(slot, key_types);
+    }
+
+    fn scalar_type(&self, domain: StorageDomain, slot: Option<Slot>) -> Option<DynSolType> {
+        match domain {
+            StorageDomain::Persistent => {
+                slot.and_then(|slot| self.persistent_scalar_types.get(&slot).cloned())
+            }
+            StorageDomain::Transient => None,
+        }
+    }
+
+    fn mapping_key_type(&self, base: &SlotExpr) -> Option<DynSolType> {
+        let root = base.canonical_slot()?;
+        let depth = mapping_depth(base);
+        self.persistent_mapping_key_types
+            .get(&root)
+            .and_then(|types| types.get(depth).cloned())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,6 +179,14 @@ impl SlotExpr {
                 preimage: preimage.clone(),
             },
         }
+    }
+}
+
+fn mapping_depth(expr: &SlotExpr) -> usize {
+    match expr {
+        SlotExpr::Mapping { base, .. } => 1 + mapping_depth(base),
+        SlotExpr::DynamicArray { base } => mapping_depth(base),
+        SlotExpr::Plain(_) | SlotExpr::HashedConst { .. } | SlotExpr::UnknownHash { .. } => 0,
     }
 }
 
@@ -340,6 +393,32 @@ fn typed_dynamic_key_type(
     }
 }
 
+fn mapping_key_type(
+    label: Option<&Label>,
+    base: &SlotExpr,
+    hints: &StorageTraceHints,
+) -> DynSolType {
+    match label {
+        Some(Label::Typed(tp)) => tp.clone(),
+        Some(Label::Loaded(storage)) => {
+            let storage = storage.borrow();
+            hints
+                .scalar_type(storage.domain, storage.slot)
+                .or_else(|| {
+                    storage
+                        .stype
+                        .has_known_internal_type()
+                        .then(|| storage.stype.get_internal_type())
+                })
+                .or_else(|| hints.mapping_key_type(base))
+                .unwrap_or(DynSolType::Uint(256))
+        }
+        _ => hints
+            .mapping_key_type(base)
+            .unwrap_or(DynSolType::Uint(256)),
+    }
+}
+
 fn normalize_slot_expr(slot_expr: &SlotExpr) -> (SlotKey, Option<Slot>, StorageType) {
     let mut current = slot_expr;
     let mut stype = StorageType::Base(DynSolType::Uint(256));
@@ -502,6 +581,7 @@ impl Storage {
 fn analyze(
     vm: &mut Vm<Label, CallDataImpl<Label>>,
     st: &mut Storage,
+    hints: &StorageTraceHints,
     ret: StepResult<Label>,
     pc: usize,
 ) -> Result<Option<usize>, Box<dyn std::error::Error>> {
@@ -566,6 +646,14 @@ fn analyze(
         }
 
         StepResult {
+            op: op::MUL | op::SHL,
+            args: match_first_two!(elabel!(label @ Label::Packed(_)), _),
+            ..
+        } => {
+            vm.stack.peek_mut()?.label = Some(label);
+        }
+
+        StepResult {
             op: op::NOT | op::ISZERO,
             args: [elabel!(Label::Constant), ..],
             ..
@@ -583,6 +671,17 @@ fn analyze(
         StepResult {
             op: op::ISZERO,
             args: [elabel!(label @ Label::Typed(DynSolType::Bool)), ..],
+            ..
+        } => {
+            let Label::Typed(tp) = label else {
+                unreachable!("pattern only matches typed boolean labels");
+            };
+            vm.stack.peek_mut()?.label = Some(Label::Packed(tp));
+        }
+
+        StepResult {
+            op: op::ISZERO,
+            args: [elabel!(label @ Label::Packed(DynSolType::Bool)), ..],
             ..
         } => {
             vm.stack.peek_mut()?.label = Some(label);
@@ -685,11 +784,26 @@ fn analyze(
         StepResult {
             op: op::OR,
             args:
-                match_first_two!(elabel!(Label::Loaded(sl)), tt @ Element{label: Some(Label::Typed(_) | Label::Constant), ..} ),
+                match_first_two!(elabel!(Label::Loaded(sl)), tt @ Element{label: Some(Label::Typed(_) | Label::Packed(_) | Label::Constant), ..} ),
             ..
         } => {
             sl.borrow_mut().last_or2 = Some(tt);
             vm.stack.peek_mut()?.label = Some(Label::Loaded(sl));
+        }
+
+        StepResult {
+            op: op::AND,
+            args:
+                match_first_two!(
+                    elabel!(Label::Typed(tp)),
+                    Element {
+                        label: Some(Label::Constant),
+                        ..
+                    }
+                ),
+            ..
+        } => {
+            vm.stack.peek_mut()?.label = Some(Label::Packed(tp));
         }
 
         StepResult {
@@ -715,6 +829,17 @@ fn analyze(
                 // string, check for SSO (only at rshift 0, not within packed fields)
                 sl.borrow_mut().stype.set_type(DynSolType::String);
             }
+            vm.stack.peek_mut()?.label = Some(Label::Loaded(sl));
+        }
+
+        StepResult {
+            op: op::AND,
+            args: match_first_two!(elabel!(Label::Loaded(sl)), _),
+            ..
+        } => {
+            // A packed array index makes the clearing mask depend on runtime
+            // index arithmetic. Keep the read-modify-write link even though
+            // that mask cannot be interpreted as a constant field mask.
             vm.stack.peek_mut()?.label = Some(Label::Loaded(sl));
         }
 
@@ -749,6 +874,7 @@ fn analyze(
 
                             let (dt, known) = match &lor.label {
                                 Some(Label::Typed(tp)) => (tp.clone(), true),
+                                Some(Label::Packed(tp)) => (tp.clone(), true),
                                 Some(Label::Loaded(sl2)) => {
                                     let sl2 = sl2.borrow();
                                     (
@@ -767,8 +893,21 @@ fn analyze(
                             };
                             st.store(domain, slot, (tv / 8) as u8, dt, pc, known);
                         } else {
-                            let known = sbr.stype.has_known_internal_type();
-                            st.store(domain, slot, 0, sbr.stype.get_internal_type(), pc, known);
+                            let (dt, known) = match &lor.label {
+                                Some(Label::Typed(tp) | Label::Packed(tp)) => (tp.clone(), true),
+                                Some(Label::Loaded(sl2)) => {
+                                    let sl2 = sl2.borrow();
+                                    (
+                                        sl2.stype.get_internal_type(),
+                                        sl2.stype.has_known_internal_type(),
+                                    )
+                                }
+                                _ => (
+                                    sbr.stype.get_internal_type(),
+                                    sbr.stype.has_known_internal_type(),
+                                ),
+                            };
+                            st.store(domain, slot, 0, dt, pc, known);
                         }
                     } else {
                         let known = sbr.stype.has_known_internal_type();
@@ -861,15 +1000,13 @@ fn analyze(
             if sz == 64 {
                 let (_val, used) = vm.memory.load_element(off); // value
                 let (sval, sused) = vm.memory.load_element(off + 32); // slot
-                let key_type = match full_word_label(&used.chunks, 32) {
-                    Some(Label::Typed(tp)) => tp.clone(),
-                    _ => DynSolType::Uint(256),
-                };
                 let key_depth = match full_word_label(&used.chunks, 32) {
                     Some(Label::Keccak(d, _)) => d + 1,
                     _ => 0,
                 };
                 let (base_expr, base_depth) = word_slot_expr(sval.data, &sused.chunks);
+                let key_type =
+                    mapping_key_type(full_word_label(&used.chunks, 32), &base_expr, hints);
                 depth = key_depth.max(base_depth);
                 if depth < 6 {
                     slot_expr = SlotExpr::Mapping {
@@ -922,6 +1059,7 @@ fn analyze(
 fn analyze_rec(
     mut vm: Vm<Label, CallDataImpl<Label>>,
     st: &mut Storage,
+    hints: &StorageTraceHints,
     gas_limit: u32,
     depth: u32,
 ) -> u32 {
@@ -945,7 +1083,7 @@ fn analyze_rec(
             break;
         }
 
-        match analyze(&mut vm, st, ret, pc) {
+        match analyze(&mut vm, st, hints, ret, pc) {
             Err(_) => {
                 // println!("errbrk");
                 break;
@@ -954,7 +1092,8 @@ fn analyze_rec(
                 if depth < 8 && other_pc < vm.code.len() {
                     let mut cloned = vm.fork();
                     cloned.pc = other_pc;
-                    gas_used += analyze_rec(cloned, st, (gas_limit - gas_used) / 2, depth + 1);
+                    gas_used +=
+                        analyze_rec(cloned, st, hints, (gas_limit - gas_used) / 2, depth + 1);
                 }
             }
             Ok(None) => {}
@@ -969,6 +1108,7 @@ fn analyze_one_function(
     selector: Selector,
     arguments: &[DynSolType],
     is_fallback: bool,
+    hints: &StorageTraceHints,
     gas_limit: u32,
 ) -> SlotHashMap {
     if cfg!(feature = "trace_storage") {
@@ -994,7 +1134,7 @@ fn analyze_one_function(
 
     #[allow(unused_assignments)]
     if gas_used < gas_limit {
-        gas_used += analyze_rec(vm, &mut st, gas_limit - gas_used, 0);
+        gas_used += analyze_rec(vm, &mut st, hints, gas_limit - gas_used, 0);
     }
 
     st.loaded
@@ -1224,6 +1364,20 @@ where
     I: IntoIterator<Item = (Selector, usize, D)>,
     D: AsRef<[DynSolType]>,
 {
+    let hints = StorageTraceHints::default();
+    contract_storage_with_hints(code, functions, gas_limit, &hints)
+}
+
+pub(crate) fn contract_storage_with_hints<I, D>(
+    code: &[u8],
+    functions: I,
+    gas_limit: u32,
+    hints: &StorageTraceHints,
+) -> StorageLayouts
+where
+    I: IntoIterator<Item = (Selector, usize, D)>,
+    D: AsRef<[DynSolType]>,
+{
     let real_gas_limit = if gas_limit == 0 {
         1e6 as u32
     } else {
@@ -1242,13 +1396,19 @@ where
     }
 
     for &(selector, _, ref arguments) in &functions {
-        let loaded =
-            analyze_one_function(code, selector, arguments.as_ref(), false, real_gas_limit);
+        let loaded = analyze_one_function(
+            code,
+            selector,
+            arguments.as_ref(),
+            false,
+            hints,
+            real_gas_limit,
+        );
         collect_storage_evidence(&mut evidence, selector, false, &loaded);
         collect_slot_records(&mut slot_records, selector, loaded);
     }
 
-    let fallback = analyze_one_function(code, fallback_selector, &[], true, real_gas_limit);
+    let fallback = analyze_one_function(code, fallback_selector, &[], true, hints, real_gas_limit);
     collect_storage_evidence(&mut evidence, fallback_selector, true, &fallback);
     collect_slot_records(&mut slot_records, fallback_selector, fallback);
 

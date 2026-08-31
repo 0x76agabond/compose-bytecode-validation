@@ -1,4 +1,8 @@
-use crate::compose::VirtualStorageLayoutRecord;
+use crate::{
+    DynSolType, Slot,
+    compose::{VirtualStorageLayout, VirtualStorageLayoutRecord},
+    storage::StorageTraceHints,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SemanticCompatibility {
@@ -154,6 +158,36 @@ pub(crate) fn expected_type_at(
         .map(|field| field.ty.display())
 }
 
+/// Compiles the parts of VSL that can anchor a bytecode storage trace without
+/// deciding its compatibility. At present this is deliberately limited to
+/// scalar storage keys and mapping key chains.
+pub(crate) fn storage_trace_hints(layout: &VirtualStorageLayout) -> StorageTraceHints {
+    let mut hints = StorageTraceHints::default();
+
+    for record in layout
+        .records
+        .iter()
+        .filter(|record| record.parent_virtual_path.is_none())
+    {
+        let Some(root) = decode_slot(&record.id) else {
+            continue;
+        };
+        for field in semantic_fields(record, &layout.records) {
+            let Some(slot) = slot_at(root, field.slot_index) else {
+                continue;
+            };
+            if let Some(ty) = dyn_sol_type(&field.ty) {
+                hints.insert_persistent_scalar_type(slot, ty);
+            }
+            if let Some(key_types) = mapping_key_types(&field.ty) {
+                hints.insert_persistent_mapping_key_types(slot, key_types);
+            }
+        }
+    }
+
+    hints
+}
+
 fn semantic_fields(
     record: &VirtualStorageLayoutRecord,
     all_records: &[VirtualStorageLayoutRecord],
@@ -179,6 +213,63 @@ fn semantic_fields(
         place_type(ty, &mut cursor, &mut fields, record, all_records);
     }
     fields
+}
+
+fn dyn_sol_type(ty: &VslType) -> Option<DynSolType> {
+    match ty {
+        VslType::Scalar { name, width } if name == "bool" => Some(DynSolType::Bool),
+        VslType::Scalar { name, .. } if name == "address" => Some(DynSolType::Address),
+        VslType::Scalar { name, width } if name.starts_with("uint") => {
+            Some(DynSolType::Uint((*width)? as usize))
+        }
+        VslType::Scalar { name, width } if name.starts_with("int") => {
+            Some(DynSolType::Int((*width)? as usize))
+        }
+        VslType::Scalar { name, width } if name.starts_with("bytes") => {
+            Some(DynSolType::FixedBytes(((*width)? / 8) as usize))
+        }
+        _ => None,
+    }
+}
+
+fn mapping_key_types(ty: &VslType) -> Option<Vec<DynSolType>> {
+    let VslType::Mapping(key, value) = ty else {
+        return None;
+    };
+    let mut key_types = vec![dyn_sol_type(key)?];
+    if let Some(mut nested) = mapping_key_types(value) {
+        key_types.append(&mut nested);
+    }
+    Some(key_types)
+}
+
+fn decode_slot(value: &str) -> Option<Slot> {
+    let value = value.strip_prefix("0x").unwrap_or(value);
+    if value.is_empty() || value.len() > 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let padded = format!("{value:0>64}");
+    let mut slot = [0_u8; 32];
+    for (index, byte) in slot.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&padded[index * 2..index * 2 + 2], 16).ok()?;
+    }
+    Some(slot)
+}
+
+fn slot_at(mut slot: Slot, index: usize) -> Option<Slot> {
+    for _ in 0..index {
+        for byte in slot.iter_mut().rev() {
+            let (next, overflow) = byte.overflowing_add(1);
+            *byte = next;
+            if !overflow {
+                break;
+            }
+        }
+        if slot.iter().all(|byte| *byte == 0) {
+            return None;
+        }
+    }
+    Some(slot)
 }
 
 #[derive(Default)]

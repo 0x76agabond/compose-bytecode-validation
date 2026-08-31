@@ -11,12 +11,12 @@ use crate::{
     Slot,
     arguments::function_arguments,
     selectors::function_selectors,
-    storage::{StorageEvidence, contract_storage},
+    storage::{StorageEvidence, contract_storage_with_hints},
 };
 use std::collections::BTreeMap;
 use vsl::{
     SemanticCompatibility, compare_semantic_types, expected_type_at,
-    has_container_shape_contradiction,
+    has_container_shape_contradiction, storage_trace_hints,
 };
 
 pub use types::{
@@ -36,6 +36,7 @@ type WriteEvidenceKey = (Option<Slot>, u8, [u8; 4], Option<usize>, String);
 
 /// Validates persistent `SSTORE` evidence against the supplied full-diamond VSL.
 pub fn validate(input: &StorageValidationInput) -> StorageValidationReport {
+    let trace_hints = storage_trace_hints(&input.virtual_storage_layout);
     let functions = function_selectors(&input.bytecode, 0, None)
         .0
         .into_iter()
@@ -44,12 +45,25 @@ pub fn validate(input: &StorageValidationInput) -> StorageValidationReport {
             (selector, offset, arguments)
         })
         .collect::<Vec<_>>();
-    let layouts = contract_storage(
+    if std::env::var_os("COMPOSE_TRACE_STORAGE").is_some() {
+        for (selector, _, arguments) in &functions {
+            let arguments = arguments
+                .iter()
+                .map(|argument| argument.sol_type_name())
+                .collect::<Vec<_>>();
+            eprintln!(
+                "[storage-validation:function] selector={} arguments={arguments:?}",
+                hex(selector)
+            );
+        }
+    }
+    let layouts = contract_storage_with_hints(
         &input.bytecode,
         functions
             .iter()
             .map(|(selector, offset, arguments)| (*selector, *offset, arguments)),
         0,
+        &trace_hints,
     );
 
     if std::env::var_os("COMPOSE_TRACE_STORAGE").is_some() {
