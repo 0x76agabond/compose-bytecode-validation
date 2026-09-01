@@ -6,8 +6,15 @@ struct Variant {
     name: &'static str,
     source: &'static str,
     contract: &'static str,
-    canonical: bool,
-    must_collide: bool,
+    expectation: Expectation,
+}
+
+#[derive(Clone, Copy)]
+enum Expectation {
+    Canonical,
+    Collision,
+    CollisionOrUncertain,
+    CompatibleEvidence,
 }
 
 struct Case {
@@ -27,15 +34,13 @@ const CASES: &[Case] = &[
                 name: "canonical",
                 source: "Canonical.sol",
                 contract: "Case1Canonical",
-                canonical: true,
-                must_collide: false,
+                expectation: Expectation::Canonical,
             },
             Variant {
                 name: "incompatible-packed-width",
                 source: "Incompatible.sol",
                 contract: "Case1Incompatible",
-                canonical: false,
-                must_collide: false,
+                expectation: Expectation::CollisionOrUncertain,
             },
         ],
     },
@@ -48,15 +53,13 @@ const CASES: &[Case] = &[
                 name: "canonical",
                 source: "Canonical.sol",
                 contract: "Case2Canonical",
-                canonical: true,
-                must_collide: false,
+                expectation: Expectation::Canonical,
             },
             Variant {
                 name: "incompatible-dynamic-width",
                 source: "Incompatible.sol",
                 contract: "Case2Incompatible",
-                canonical: false,
-                must_collide: true,
+                expectation: Expectation::Collision,
             },
         ],
     },
@@ -69,22 +72,19 @@ const CASES: &[Case] = &[
                 name: "canonical",
                 source: "Canonical.sol",
                 contract: "Case3Canonical",
-                canonical: true,
-                must_collide: false,
+                expectation: Expectation::Canonical,
             },
             Variant {
                 name: "incompatible-dynamic-widths",
                 source: "IncompatibleDynamic.sol",
                 contract: "Case3IncompatibleDynamic",
-                canonical: false,
-                must_collide: true,
+                expectation: Expectation::Collision,
             },
             Variant {
                 name: "incompatible-fixed-widths",
                 source: "IncompatibleFixed.sol",
                 contract: "Case3IncompatibleFixed",
-                canonical: false,
-                must_collide: true,
+                expectation: Expectation::Collision,
             },
         ],
     },
@@ -97,71 +97,77 @@ const CASES: &[Case] = &[
                 name: "canonical",
                 source: "Canonical.sol",
                 contract: "Case4Canonical",
-                canonical: true,
-                must_collide: false,
+                expectation: Expectation::Canonical,
             },
             Variant {
                 name: "incompatible-member-order",
                 source: "Incompatible.sol",
                 contract: "Case4Incompatible",
-                canonical: false,
-                must_collide: true,
+                expectation: Expectation::Collision,
             },
         ],
     },
     Case {
         name: "5-array-struct",
         directory: "5-array-struct",
-        minimum_canonical_validated: 0,
+        minimum_canonical_validated: 9,
         variants: &[
             Variant {
                 name: "canonical",
                 source: "Canonical.sol",
                 contract: "Case5Canonical",
-                canonical: true,
-                must_collide: false,
+                expectation: Expectation::Canonical,
             },
             Variant {
                 name: "incompatible-member-order",
                 source: "IncompatibleReordered.sol",
                 contract: "Case5IncompatibleReordered",
-                canonical: false,
-                must_collide: false,
+                expectation: Expectation::Collision,
+            },
+            Variant {
+                name: "incompatible-wide-member-order",
+                source: "IncompatibleWideReordered.sol",
+                contract: "Case5IncompatibleWideReordered",
+                expectation: Expectation::Collision,
             },
             Variant {
                 name: "incompatible-address-array",
                 source: "IncompatibleAddress.sol",
                 contract: "Case5IncompatibleAddress",
-                canonical: false,
-                must_collide: false,
+                expectation: Expectation::CompatibleEvidence,
+            },
+            Variant {
+                name: "adjacent-arrays",
+                source: "AdjacentArrays.sol",
+                contract: "Case5AdjacentArrays",
+                expectation: Expectation::Collision,
             },
         ],
     },
     Case {
         name: "6-array-mapping-struct",
         directory: "6-array-mapping-struct",
+        // Recursive VSL matching is deliberately deferred. The fixture keeps
+        // recording current evidence without claiming complete case-6 support.
         minimum_canonical_validated: 0,
         variants: &[
             Variant {
-                name: "canonical-mapping-address",
+                name: "canonical-mapping-array-struct",
                 source: "Canonical.sol",
                 contract: "Case6Canonical",
-                canonical: true,
-                must_collide: false,
+                expectation: Expectation::Canonical,
             },
             Variant {
                 name: "incompatible-mapping-array-struct",
                 source: "IncompatibleOnlyArray.sol",
                 contract: "Case6IncompatibleOnlyArray",
-                canonical: false,
-                must_collide: false,
+                expectation: Expectation::CollisionOrUncertain,
             },
             Variant {
                 name: "incompatible-mapping-array-and-fields",
                 source: "IncompatibleArrayAndFields.sol",
                 contract: "Case6IncompatibleArrayAndFields",
-                canonical: false,
-                must_collide: false,
+                expectation: Expectation::CollisionOrUncertain,
             },
         ],
     },
@@ -221,31 +227,45 @@ fn main() {
             });
             println!("{report}");
 
-            if variant.canonical {
-                assert!(
-                    report.collisions.is_empty(),
-                    "{} canonical bytecode contradicts its own VSL",
-                    case.name
-                );
-                assert!(
-                    report.validated_variables.len() >= case.minimum_canonical_validated,
-                    "{} canonical bytecode recovered too few VSL variables",
-                    case.name
-                );
-            } else if variant.must_collide {
-                assert!(
+            match variant.expectation {
+                Expectation::Canonical => {
+                    assert!(
+                        report.collisions.is_empty(),
+                        "{} canonical bytecode contradicts its own VSL",
+                        case.name
+                    );
+                    assert!(
+                        report.validated_variables.len() >= case.minimum_canonical_validated,
+                        "{} canonical bytecode recovered too few VSL variables",
+                        case.name
+                    );
+                }
+                Expectation::Collision => assert!(
                     !report.collisions.is_empty(),
                     "{} / {} must produce a proven collision",
                     case.name,
                     variant.name
-                );
-            } else {
-                assert!(
+                ),
+                Expectation::CollisionOrUncertain => assert!(
                     !report.collisions.is_empty() || !report.uncertain_scopes.is_empty(),
                     "{} / {} produced no contradiction or scoped uncertainty",
                     case.name,
                     variant.name
-                );
+                ),
+                Expectation::CompatibleEvidence => {
+                    assert!(
+                        report.collisions.is_empty(),
+                        "{} / {} has no contradictory write path",
+                        case.name,
+                        variant.name
+                    );
+                    assert!(
+                        !report.validated_variables.is_empty(),
+                        "{} / {} must retain its compatible observed write",
+                        case.name,
+                        variant.name
+                    );
+                }
             }
         }
     }

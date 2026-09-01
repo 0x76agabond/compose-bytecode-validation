@@ -6,14 +6,21 @@
       "codeWidth": 1,
       "layout": [
         "0xf2",
+        "0xff",
+        "0xf2",
         "0xff"
       ],
       "serializedLayout": [
         "0x01",
         "0xf2",
+        "0xff",
+        "0xf2",
         "0xff"
       ],
       "slots": [
+        [
+          256
+        ],
         [
           256
         ]
@@ -54,6 +61,41 @@
       "contractName": "Case5Canonical",
       "structName": "Storage",
       "virtualPath": "compose.validation.case5.array-struct.0",
+      "parentVirtualPath": "compose.validation.case5.array-struct",
+      "diamondName": null
+    },
+    {
+      "id": "0x8dc148ea81f8aa0e56278150b256587c23f4c5902b5760bf11e1359c36d23444",
+      "parentPath": "compose.validation.case5.array-struct",
+      "kind": "immutable",
+      "codeWidth": 1,
+      "layout": [
+        "0x2f",
+        "0x03",
+        "0x2f"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0x2f",
+        "0x03",
+        "0x2f"
+      ],
+      "slots": [
+        [
+          256
+        ],
+        [
+          160
+        ],
+        [
+          256
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "Canonical.sol",
+      "contractName": "Case5Canonical",
+      "structName": "Storage",
+      "virtualPath": "compose.validation.case5.array-struct.1",
       "parentVirtualPath": "compose.validation.case5.array-struct",
       "diamondName": null
     }

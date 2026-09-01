@@ -11,7 +11,7 @@ use crate::{
     Slot,
     arguments::function_arguments,
     selectors::function_selectors,
-    storage::{StorageEvidence, contract_storage_with_hints},
+    storage::{StorageEvidence, StoragePathSegment, contract_storage_with_hints},
 };
 use std::collections::BTreeMap;
 use vsl::{
@@ -32,6 +32,52 @@ struct VslVariableMatch {
     expected_width: Option<u16>,
     expected_field_start: Option<u8>,
     mapping_layers: usize,
+    dynamic_array_layers: usize,
+    expected_array_stride: Option<usize>,
+    observed_array_stride: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ContainerMatch {
+    mapping_layers: usize,
+    dynamic_array_layers: usize,
+    expected_array_stride: Option<usize>,
+    observed_array_stride: Option<usize>,
+}
+
+impl ContainerMatch {
+    /// Transitional summary for the existing one-child VSL matcher.
+    ///
+    /// `StorageEvidence::storage_path` retains every segment; this only keeps
+    /// the old matching behavior until the VSL walk itself becomes recursive.
+    fn from_path(path: &[StoragePathSegment]) -> Self {
+        let dynamic_array = path.iter().rev().find_map(|segment| match segment {
+            StoragePathSegment::DynamicArray { index, stride } if index.is_some() => Some(*stride),
+            StoragePathSegment::Mapping { .. }
+            | StoragePathSegment::Offset { .. }
+            | StoragePathSegment::DynamicArray { .. } => None,
+        });
+        Self {
+            mapping_layers: usize::from(
+                path.iter()
+                    .any(|segment| matches!(segment, StoragePathSegment::Mapping { .. })),
+            ),
+            dynamic_array_layers: usize::from(
+                path.iter()
+                    .any(|segment| matches!(segment, StoragePathSegment::DynamicArray { .. })),
+            ),
+            expected_array_stride: None,
+            observed_array_stride: dynamic_array.flatten(),
+        }
+    }
+
+    fn has_mapping(&self) -> bool {
+        self.mapping_layers > 0
+    }
+
+    fn has_dynamic_array(&self) -> bool {
+        self.dynamic_array_layers > 0
+    }
 }
 
 type WriteEvidenceKey = (Option<Slot>, usize, u8, [u8; 4], Option<usize>, String);
@@ -71,10 +117,11 @@ pub fn validate(input: &StorageValidationInput) -> StorageValidationReport {
     if std::env::var_os("COMPOSE_TRACE_STORAGE").is_some() {
         for evidence in &layouts.evidence {
             eprintln!(
-                "[storage-validation:evidence] domain={} slot={:?} path={} slot_delta={} offset={} field_width={:?} type={} known={} score={} write={} pc={:?} selector={} fallback={} mask={:?}",
+                "[storage-validation:evidence] domain={} slot={:?} path={} storage_path={:?} slot_delta={} offset={} field_width={:?} type={} known={} score={} write={} pc={:?} selector={} fallback={} mask={:?}",
                 evidence.domain,
                 evidence.slot,
                 evidence.symbolic_path,
+                evidence.storage_path,
                 evidence.slot_delta,
                 evidence.offset,
                 evidence.field_width,
@@ -159,8 +206,28 @@ fn validate_write(
         });
         return;
     };
-    let observed_type = unwrap_mapping_layers(&evidence.inferred_type, matched.mapping_layers)
-        .unwrap_or_else(|| evidence.inferred_type.clone());
+    let observed_type = unwrap_container_layers(
+        &evidence.inferred_type,
+        matched.mapping_layers,
+        matched.dynamic_array_layers,
+    )
+    .unwrap_or_else(|| evidence.inferred_type.clone());
+
+    if let (Some(expected_stride), Some(observed_stride)) =
+        (matched.expected_array_stride, matched.observed_array_stride)
+        && expected_stride != observed_stride
+    {
+        report.collisions.push(StorageCollision {
+            location,
+            virtual_path: matched.virtual_path,
+            expected_type,
+            observed_type,
+            reason: format!(
+                "dynamic-array element stride {observed_stride} slots contradicts expected {expected_stride} slots"
+            ),
+        });
+        return;
+    }
 
     if expected_type.contains("virtual-struct(") {
         report.uncertain_scopes.push(UncertainStorageScope {
@@ -175,7 +242,8 @@ fn validate_write(
     // A mask proves a concrete mapping-value field write. If that value is
     // not represented by a virtual child record, comparing it to the mapping
     // root would turn missing path reconstruction into a false collision.
-    if evidence.is_mapping_value && matched.mapping_layers == 0 && evidence.field_width.is_some() {
+    let containers = ContainerMatch::from_path(&evidence.storage_path);
+    if containers.has_mapping() && matched.mapping_layers == 0 && evidence.field_width.is_some() {
         report.uncertain_scopes.push(UncertainStorageScope {
             location,
             virtual_path: Some(matched.virtual_path),
@@ -311,6 +379,7 @@ fn match_vsl_variable(
     layout: &VirtualStorageLayout,
 ) -> Option<VslVariableMatch> {
     let slot = evidence.slot.as_ref()?;
+    let containers = ContainerMatch::from_path(&evidence.storage_path);
     layout
         .records
         .iter()
@@ -319,23 +388,46 @@ fn match_vsl_variable(
             let root = decode_slot(&record.id)?;
             let slot_index = slot_delta(&root, slot, record.slots.len())?;
             let container_type = expected_type_at(record, &layout.records, slot_index, 0);
-            let child = container_type
-                .as_deref()
-                .and_then(virtual_struct_path)
-                .filter(|_| evidence.is_mapping_value)
-                .and_then(|path| {
-                    layout.records.iter().find(|child| {
-                        child.virtual_path == path
-                            && child.parent_virtual_path.as_deref()
-                                == Some(record.virtual_path.as_str())
-                    })
-                });
+            let child_path = container_type.as_deref().and_then(|container_type| {
+                if containers.has_mapping() {
+                    virtual_struct_path(container_type)
+                } else if containers.has_dynamic_array()
+                    && containers.observed_array_stride.is_some()
+                {
+                    dynamic_array_virtual_struct_path(container_type)
+                } else {
+                    None
+                }
+            });
+            let child = child_path.and_then(|path| {
+                layout.records.iter().find(|child| {
+                    child.virtual_path == path
+                        && child.parent_virtual_path.as_deref()
+                            == Some(record.virtual_path.as_str())
+                })
+            });
 
             match child {
-                Some(child) => {
-                    vsl_variable_match(child, layout, evidence.slot_delta, evidence.offset, 1)
-                }
-                None => vsl_variable_match(record, layout, slot_index, evidence.offset, 0),
+                Some(child) => vsl_variable_match(
+                    child,
+                    layout,
+                    evidence.slot_delta,
+                    evidence.offset,
+                    ContainerMatch {
+                        expected_array_stride: containers
+                            .observed_array_stride
+                            .is_some()
+                            .then_some(child.slots.len()),
+                        ..containers
+                    },
+                ),
+                None => vsl_variable_match(
+                    record,
+                    layout,
+                    slot_index,
+                    evidence.offset,
+                    ContainerMatch::default(),
+                ),
             }
         })
 }
@@ -345,7 +437,7 @@ fn vsl_variable_match(
     layout: &VirtualStorageLayout,
     slot_index: usize,
     offset: u8,
-    mapping_layers: usize,
+    container: ContainerMatch,
 ) -> Option<VslVariableMatch> {
     record.slots.get(slot_index)?;
     let expected_field_start = expected_field_start_at(record, slot_index, offset);
@@ -359,7 +451,10 @@ fn vsl_variable_match(
         ),
         expected_width: expected_width_at(record, slot_index, offset),
         expected_field_start,
-        mapping_layers,
+        mapping_layers: container.mapping_layers,
+        dynamic_array_layers: container.dynamic_array_layers,
+        expected_array_stride: container.expected_array_stride,
+        observed_array_stride: container.observed_array_stride,
     })
 }
 
@@ -370,9 +465,17 @@ fn virtual_struct_path(expected_type: &str) -> Option<&str> {
     Some(&expected_type[start..end])
 }
 
-fn unwrap_mapping_layers(value: &str, layers: usize) -> Option<String> {
+fn dynamic_array_virtual_struct_path(expected_type: &str) -> Option<&str> {
+    virtual_struct_path(expected_type.strip_suffix("[]")?)
+}
+
+fn unwrap_container_layers(
+    value: &str,
+    mapping_layers: usize,
+    dynamic_array_layers: usize,
+) -> Option<String> {
     let mut current = value.trim();
-    for _ in 0..layers {
+    for _ in 0..mapping_layers {
         let body = current.strip_prefix("mapping(")?.strip_suffix(')')?;
         let mut depth = 0_i32;
         let mut value_start = None;
@@ -388,6 +491,9 @@ fn unwrap_mapping_layers(value: &str, layers: usize) -> Option<String> {
             }
         }
         current = body.get(value_start?..)?.trim();
+    }
+    for _ in 0..dynamic_array_layers {
+        current = current.strip_suffix("[]")?.trim();
     }
     Some(current.to_owned())
 }
@@ -533,7 +639,7 @@ mod tests {
                 slot
             }),
             symbolic_path: "Plain(0x01)".to_owned(),
-            is_mapping_value: false,
+            storage_path: Vec::new(),
             slot_delta: 0,
             offset: 0,
             field_width: None,
@@ -565,7 +671,7 @@ mod tests {
                 slot
             }),
             symbolic_path: "Plain(0x09)".to_owned(),
-            is_mapping_value: false,
+            storage_path: Vec::new(),
             slot_delta: 0,
             offset: 0,
             field_width: None,

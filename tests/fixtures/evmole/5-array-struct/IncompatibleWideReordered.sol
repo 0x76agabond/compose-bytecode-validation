@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-contract Case5Canonical {
+contract Case5IncompatibleWideReordered {
     bytes32 constant STORAGE_POSITION = keccak256("compose.validation.case5.array-struct");
 
     struct Node {
@@ -12,20 +12,13 @@ contract Case5Canonical {
 
     struct WideNode {
         uint256 value;
-        address target;
         uint256 timestamp;
+        address target;
     }
 
     struct Storage {
         Node[] nodes;
         WideNode[] wideNodes;
-    }
-
-    function writeNode(uint256 index, address target, bytes4 previousId, bytes8 nextId) external {
-        Node storage node = _storage().nodes[index];
-        node.target = target;
-        node.previousId = previousId;
-        node.nextId = nextId;
     }
 
     function writeWideNode(
@@ -35,19 +28,6 @@ contract Case5Canonical {
         uint256 timestamp
     ) external {
         WideNode storage node = _storage().wideNodes[index];
-        node.value = value;
-        node.target = target;
-        node.timestamp = timestamp;
-    }
-
-    function writeWideNodeAtDerivedIndex(
-        uint256 index,
-        uint256 value,
-        address target,
-        uint256 timestamp
-    ) external {
-        uint256 derivedIndex = index * 2 + 1;
-        WideNode storage node = _storage().wideNodes[derivedIndex];
         node.value = value;
         node.target = target;
         node.timestamp = timestamp;

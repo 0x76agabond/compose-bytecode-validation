@@ -10,10 +10,10 @@ contract Case6IncompatibleArrayAndFields {
         bool enabled;
     }
 
-    struct Storage { mapping(bytes4 => Node) nodes; }
+    struct Storage { mapping(bytes4 => Node[]) nodes; }
 
     function writeNode(bytes4 selector, uint256 value, address target, bool enabled) external {
-        Node storage node = _storage().nodes[selector];
+        Node storage node = _storage().nodes[selector].push();
         node.values.push(value);
         node.target = target;
         node.enabled = enabled;

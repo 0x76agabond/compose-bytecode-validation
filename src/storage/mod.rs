@@ -55,13 +55,81 @@ pub struct StorageRecord {
 enum Label {
     Constant,
 
-    Typed(DynSolType),
+    Typed(DynSolType, Option<AffineExpr>),
     /// A typed value masked to a packed storage field before it is shifted
     /// into a read-modify-write `SSTORE` value.
     Packed(DynSolType),
     Loaded(Rc<RefCell<StorageElement>>),
     IsZero(Rc<RefCell<StorageElement>>),
     Keccak(u32, SlotExpr),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AffineExpr {
+    calldata_terms: BTreeMap<usize, U256>,
+    constant: U256,
+}
+
+impl AffineExpr {
+    fn calldata(offset: usize) -> Self {
+        Self {
+            calldata_terms: BTreeMap::from([(offset, U256::from(1))]),
+            constant: U256::ZERO,
+        }
+    }
+
+    fn add(&self, other: &Self) -> Option<Self> {
+        let mut result = self.clone();
+        result.constant = result.constant.checked_add(other.constant)?;
+        for (source, coefficient) in &other.calldata_terms {
+            let current = result
+                .calldata_terms
+                .get(source)
+                .copied()
+                .unwrap_or_default();
+            result
+                .calldata_terms
+                .insert(*source, current.checked_add(*coefficient)?);
+        }
+        Some(result)
+    }
+
+    fn add_constant(&self, value: U256) -> Option<Self> {
+        let mut result = self.clone();
+        result.constant = result.constant.checked_add(value)?;
+        Some(result)
+    }
+
+    fn multiply(&self, value: U256) -> Option<Self> {
+        let mut result = self.clone();
+        result.constant = result.constant.checked_mul(value)?;
+        for coefficient in result.calldata_terms.values_mut() {
+            *coefficient = coefficient.checked_mul(value)?;
+        }
+        Some(result)
+    }
+
+    fn scale_from(&self, scaled: &Self) -> Option<usize> {
+        let (base, candidate) = self
+            .calldata_terms
+            .iter()
+            .find(|(_, coefficient)| !coefficient.is_zero())
+            .and_then(|(source, coefficient)| {
+                scaled
+                    .calldata_terms
+                    .get(source)
+                    .map(|scaled| (*coefficient, *scaled))
+            })?;
+        let factor = candidate.checked_div(base)?;
+        if base.checked_mul(factor)? != candidate
+            || self.multiply(factor).as_ref() != Some(scaled)
+            || factor.is_zero()
+            || factor > U256::from(usize::MAX)
+        {
+            return None;
+        }
+        Some(factor.to())
+    }
 }
 
 /// Optional type anchors supplied by a host that already knows source storage.
@@ -125,6 +193,11 @@ enum SlotExpr {
     DynamicArray {
         base: Box<SlotExpr>,
     },
+    DynamicArrayElement {
+        base: Box<SlotExpr>,
+        index: AffineExpr,
+        stride: usize,
+    },
     HashedConst {
         hash: Slot,
         preimage: Vec<u8>,
@@ -163,14 +236,6 @@ fn should_surface_hashed_slot(preimage: &[u8]) -> bool {
 }
 
 impl SlotExpr {
-    fn has_mapping(&self) -> bool {
-        match self {
-            Self::Mapping { .. } => true,
-            Self::Offset { base, .. } | Self::DynamicArray { base } => base.has_mapping(),
-            Self::Plain(_) | Self::HashedConst { .. } | Self::UnknownHash { .. } => false,
-        }
-    }
-
     fn canonical_slot(&self) -> Option<Slot> {
         match self {
             SlotExpr::Plain(slot) => Some(*slot),
@@ -180,7 +245,8 @@ impl SlotExpr {
             } => should_surface_hashed_slot(preimage).then_some(*slot),
             SlotExpr::Mapping { base, .. }
             | SlotExpr::Offset { base, .. }
-            | SlotExpr::DynamicArray { base } => base.canonical_slot(),
+            | SlotExpr::DynamicArray { base }
+            | SlotExpr::DynamicArrayElement { base, .. } => base.canonical_slot(),
             SlotExpr::UnknownHash { .. } => None,
         }
     }
@@ -192,7 +258,8 @@ impl SlotExpr {
             }
             SlotExpr::Mapping { base, .. }
             | SlotExpr::Offset { base, .. }
-            | SlotExpr::DynamicArray { base } => base.slot_key(),
+            | SlotExpr::DynamicArray { base }
+            | SlotExpr::DynamicArrayElement { base, .. } => base.slot_key(),
             SlotExpr::UnknownHash { size, preimage } => SlotKey::UnknownHash {
                 size: *size,
                 preimage: preimage.clone(),
@@ -201,18 +268,77 @@ impl SlotExpr {
     }
 }
 
+/// Ordered storage containers between a declared root and an observed write.
+///
+/// This preserves the symbolic route so later validation can recurse through
+/// the same route instead of rebuilding container facts from flat metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StoragePathSegment {
+    Mapping {
+        key_type: String,
+    },
+    DynamicArray {
+        index: Option<String>,
+        stride: Option<usize>,
+    },
+    Offset {
+        slots: usize,
+    },
+}
+
+fn storage_path(expr: &SlotExpr, path: &mut Vec<StoragePathSegment>) {
+    match expr {
+        SlotExpr::Mapping { key_type, base } => {
+            storage_path(base, path);
+            path.push(StoragePathSegment::Mapping {
+                key_type: format!("{key_type:?}"),
+            });
+        }
+        SlotExpr::Offset { base, slots } => {
+            storage_path(base, path);
+            path.push(StoragePathSegment::Offset { slots: *slots });
+        }
+        SlotExpr::DynamicArray { base } => {
+            storage_path(base, path);
+            path.push(StoragePathSegment::DynamicArray {
+                index: None,
+                stride: None,
+            });
+        }
+        SlotExpr::DynamicArrayElement {
+            base,
+            index,
+            stride,
+        } => {
+            let array_base = match base.as_ref() {
+                SlotExpr::DynamicArray { base } => base.as_ref(),
+                base => base,
+            };
+            storage_path(array_base, path);
+            path.push(StoragePathSegment::DynamicArray {
+                index: Some(format!("{index:?}")),
+                stride: Some(*stride),
+            });
+        }
+        SlotExpr::Plain(_) | SlotExpr::HashedConst { .. } | SlotExpr::UnknownHash { .. } => {}
+    }
+}
+
 fn mapping_depth(expr: &SlotExpr) -> usize {
     match expr {
         SlotExpr::Mapping { base, .. } => 1 + mapping_depth(base),
-        SlotExpr::Offset { base, .. } | SlotExpr::DynamicArray { base } => mapping_depth(base),
+        SlotExpr::Offset { base, .. }
+        | SlotExpr::DynamicArray { base }
+        | SlotExpr::DynamicArrayElement { base, .. } => mapping_depth(base),
         SlotExpr::Plain(_) | SlotExpr::HashedConst { .. } | SlotExpr::UnknownHash { .. } => 0,
     }
 }
 
 impl CallDataLabel for Label {
-    fn label(_: usize, tp: &DynSolType, label_type: CallDataLabelType) -> Option<Label> {
+    fn label(offset: usize, tp: &DynSolType, label_type: CallDataLabelType) -> Option<Label> {
         if matches!(label_type, CallDataLabelType::RealValue) {
-            Some(Label::Typed(tp.clone()))
+            let affine = matches!(tp, DynSolType::Uint(_)).then(|| AffineExpr::calldata(offset));
+            Some(Label::Typed(tp.clone(), affine))
         } else {
             None
         }
@@ -409,8 +535,8 @@ fn typed_dynamic_key_type(
         }
 
         match &chunk.src_label {
-            Label::Typed(DynSolType::String) => return Some(DynSolType::String),
-            Label::Typed(DynSolType::Bytes) => saw_bytes = true,
+            Label::Typed(DynSolType::String, _) => return Some(DynSolType::String),
+            Label::Typed(DynSolType::Bytes, _) => saw_bytes = true,
             _ => {}
         }
     }
@@ -428,7 +554,7 @@ fn mapping_key_type(
     hints: &StorageTraceHints,
 ) -> DynSolType {
     match label {
-        Some(Label::Typed(tp)) => tp.clone(),
+        Some(Label::Typed(tp, _)) => tp.clone(),
         Some(Label::Loaded(storage)) => {
             let storage = storage.borrow();
             hints
@@ -470,6 +596,7 @@ fn normalize_slot_expr(slot_expr: &SlotExpr) -> (SlotKey, Option<Slot>, StorageT
                 };
                 current = base;
             }
+            SlotExpr::DynamicArrayElement { base, .. } => current = base,
             SlotExpr::Offset { base, slots } => {
                 slot_delta = slot_delta.saturating_add(*slots);
                 current = base;
@@ -595,11 +722,54 @@ fn looks_like_opaque_bitfield_slot(entries: &[(Selector, StorageElement)]) -> bo
     has_suspicious_root && !has_legitimate_root
 }
 
+#[derive(Clone, Debug)]
+struct CheckedArrayIndex {
+    root: SlotKey,
+    index: AffineExpr,
+}
+
 #[derive(Default)]
 struct Storage {
     loaded: SlotHashMap,
+    checked_array_indexes: Vec<CheckedArrayIndex>,
 }
 impl Storage {
+    fn record_array_index(&mut self, storage: &Rc<RefCell<StorageElement>>, index: AffineExpr) {
+        let storage = storage.borrow();
+        let checked = CheckedArrayIndex {
+            root: storage.slot_expr.slot_key(),
+            index,
+        };
+        if !self
+            .checked_array_indexes
+            .iter()
+            .any(|item| item.root == checked.root && item.index == checked.index)
+        {
+            self.checked_array_indexes.push(checked);
+        }
+    }
+
+    fn array_element(
+        &self,
+        dynamic_array: &SlotExpr,
+        scaled_index: &AffineExpr,
+    ) -> Option<(AffineExpr, usize)> {
+        let SlotExpr::DynamicArray { base } = dynamic_array else {
+            return None;
+        };
+        let root = base.slot_key();
+        self.checked_array_indexes
+            .iter()
+            .rev()
+            .filter(|checked| checked.root == root)
+            .find_map(|checked| {
+                checked
+                    .index
+                    .scale_from(scaled_index)
+                    .map(|stride| (checked.index.clone(), stride))
+            })
+    }
+
     fn remove(&mut self, val: &Rc<RefCell<StorageElement>>) {
         let key = {
             let val = val.borrow();
@@ -718,15 +888,83 @@ fn analyze(
         }
 
         StepResult {
+            op: op::MUL,
+            args:
+                match_first_two!(
+                    elabel!(Label::Typed(tp, Some(affine))),
+                    value @ Element {
+                        label: Some(Label::Constant),
+                        ..
+                    }
+                ),
+            ..
+        } => {
+            let factor: U256 = (&value).into();
+            vm.stack.peek_mut()?.label = Some(Label::Typed(tp, affine.multiply(factor)));
+        }
+
+        StepResult {
+            op: op::SHL,
+            args:
+                [
+                    shift @ Element {
+                        label: Some(Label::Constant),
+                        ..
+                    },
+                    elabel!(Label::Typed(tp, Some(affine))),
+                    ..,
+                ],
+            ..
+        } => {
+            let shift: U256 = (&shift).into();
+            let affine = (shift < U256::from(256))
+                .then(|| U256::from(1) << shift.to::<usize>())
+                .and_then(|factor| affine.multiply(factor));
+            vm.stack.peek_mut()?.label = Some(Label::Typed(tp, affine));
+        }
+
+        StepResult {
+            op: op::ADD,
+            args:
+                match_first_two!(
+                    elabel!(Label::Typed(tp, Some(affine))),
+                    value @ Element {
+                        label: Some(Label::Constant),
+                        ..
+                    }
+                ),
+            ..
+        } => {
+            let value: U256 = (&value).into();
+            vm.stack.peek_mut()?.label = Some(Label::Typed(tp, affine.add_constant(value)));
+        }
+
+        StepResult {
+            op: op::ADD,
+            args:
+                [
+                    elabel!(Label::Typed(tp, Some(left))),
+                    elabel!(Label::Typed(_, Some(right))),
+                    ..,
+                ],
+            ..
+        } => {
+            vm.stack.peek_mut()?.label = Some(Label::Typed(tp, left.add(&right)));
+        }
+
+        StepResult {
             op: op::ADD | op::MUL | op::SUB | op::XOR | op::SHL | op::SHR,
             args:
                 match_first_two!(
-                    elabel!(lb @ (Label::Loaded(_) | Label::Typed(_))),
+                    elabel!(lb @ (Label::Loaded(_) | Label::Typed(_, _))),
                     elabel!(Label::Constant)
                 ),
             ..
         } => {
-            vm.stack.peek_mut()?.label = Some(lb);
+            vm.stack.peek_mut()?.label = Some(match lb {
+                Label::Typed(tp, _) => Label::Typed(tp, None),
+                other => other,
+            });
         }
 
         StepResult {
@@ -748,22 +986,22 @@ fn analyze(
         StepResult {
             op: op::CALLVALUE, ..
         } => {
-            vm.stack.peek_mut()?.label = Some(Label::Typed(DynSolType::Uint(256)));
+            vm.stack.peek_mut()?.label = Some(Label::Typed(DynSolType::Uint(256), None));
         }
 
         StepResult {
             op: op::TIMESTAMP, ..
         } => {
-            vm.stack.peek_mut()?.label = Some(Label::Typed(DynSolType::Uint(256)));
+            vm.stack.peek_mut()?.label = Some(Label::Typed(DynSolType::Uint(256), None));
         }
 
         //TODO signextend & byte
         StepResult {
             op: op::ISZERO,
-            args: [elabel!(label @ Label::Typed(DynSolType::Bool)), ..],
+            args: [elabel!(label @ Label::Typed(DynSolType::Bool, _)), ..],
             ..
         } => {
-            let Label::Typed(tp) = label else {
+            let Label::Typed(tp, _) = label else {
                 unreachable!("pattern only matches typed boolean labels");
             };
             vm.stack.peek_mut()?.label = Some(Label::Packed(tp));
@@ -779,10 +1017,42 @@ fn analyze(
 
         StepResult {
             op: op::SIGNEXTEND,
-            args: [_, elabel!(label @ Label::Typed(_)), ..],
+            args: [_, elabel!(label @ Label::Typed(_, _)), ..],
             ..
         } => {
             vm.stack.peek_mut()?.label = Some(label);
+        }
+
+        StepResult {
+            op: op::LT | op::GT,
+            args:
+                match_first_two!(
+                    elabel!(Label::Typed(_, Some(index))),
+                    elabel!(Label::Loaded(storage))
+                ),
+            ..
+        } => {
+            st.record_array_index(&storage, index);
+        }
+
+        StepResult {
+            op: op::ADD,
+            args:
+                match_first_two!(
+                    elabel!(Label::Keccak(depth, expr)),
+                    elabel!(Label::Typed(_, Some(scaled_index)))
+                ),
+            ..
+        } => {
+            let expr = match st.array_element(&expr, &scaled_index) {
+                Some((index, stride)) => SlotExpr::DynamicArrayElement {
+                    base: Box::new(expr),
+                    index,
+                    stride,
+                },
+                None => expr,
+            };
+            vm.stack.peek_mut()?.label = Some(Label::Keccak(depth, expr));
         }
 
         StepResult {
@@ -842,7 +1112,7 @@ fn analyze(
             ..
         } => {
             *vm.stack.peek_mut()? = Element {
-                label: Some(Label::Typed(DynSolType::Address)),
+                label: Some(Label::Typed(DynSolType::Address, None)),
                 data: VAL_1_B,
             };
         }
@@ -884,7 +1154,7 @@ fn analyze(
 
         StepResult {
             op: op::EQ,
-            args: match_first_two!(elabel!(Label::Typed(tp)), elabel!(Label::Loaded(sl))),
+            args: match_first_two!(elabel!(Label::Typed(tp, _)), elabel!(Label::Loaded(sl))),
             ..
         } => {
             sl.borrow_mut().stype.set_type(tp);
@@ -893,7 +1163,7 @@ fn analyze(
         StepResult {
             op: op::OR,
             args:
-                match_first_two!(elabel!(Label::Loaded(sl)), tt @ Element{label: Some(Label::Typed(_) | Label::Packed(_) | Label::Constant), ..} ),
+                match_first_two!(elabel!(Label::Loaded(sl)), tt @ Element{label: Some(Label::Typed(_, _) | Label::Packed(_) | Label::Constant), ..} ),
             ..
         } => {
             sl.borrow_mut().last_or2 = Some(tt);
@@ -904,7 +1174,7 @@ fn analyze(
             op: op::AND,
             args:
                 match_first_two!(
-                    elabel!(Label::Typed(tp)),
+                    elabel!(Label::Typed(tp, _)),
                     Element {
                         label: Some(Label::Constant),
                         ..
@@ -917,7 +1187,7 @@ fn analyze(
 
         StepResult {
             op: op::AND,
-            args: match_first_two!(elabel!(label @ Label::Typed(_)), _),
+            args: match_first_two!(elabel!(label @ Label::Typed(_, _)), _),
             ..
         } => {
             vm.stack.peek_mut()?.label = Some(label);
@@ -970,7 +1240,7 @@ fn analyze(
             }
 
             match value.label {
-                Some(Label::Typed(t)) => st.store(
+                Some(Label::Typed(t, _)) => st.store(
                     domain,
                     slot,
                     t,
@@ -1000,7 +1270,7 @@ fn analyze(
                             let (offset, width) = field.unwrap_or((0, 256));
 
                             let (dt, known) = match &lor.label {
-                                Some(Label::Typed(tp)) => (tp.clone(), true),
+                                Some(Label::Typed(tp, _)) => (tp.clone(), true),
                                 Some(Label::Packed(tp)) => (tp.clone(), true),
                                 Some(Label::Loaded(sl2)) => {
                                     let sl2 = sl2.borrow();
@@ -1031,7 +1301,7 @@ fn analyze(
                             );
                         } else {
                             let (dt, known) = match &lor.label {
-                                Some(Label::Typed(tp) | Label::Packed(tp)) => (tp.clone(), true),
+                                Some(Label::Typed(tp, _) | Label::Packed(tp)) => (tp.clone(), true),
                                 Some(Label::Loaded(sl2)) => {
                                     let sl2 = sl2.borrow();
                                     (
@@ -1365,7 +1635,7 @@ pub(crate) struct StorageEvidence {
     pub domain: &'static str,
     pub slot: Option<Slot>,
     pub symbolic_path: String,
-    pub is_mapping_value: bool,
+    pub storage_path: Vec<StoragePathSegment>,
     pub slot_delta: usize,
     pub offset: u8,
     pub field_width: Option<u16>,
@@ -1388,6 +1658,8 @@ fn collect_storage_evidence(
     for elements in loaded.values() {
         for element in elements {
             let element = element.borrow();
+            let mut storage_path_segments = Vec::new();
+            storage_path(&element.slot_expr, &mut storage_path_segments);
             evidence.push(StorageEvidence {
                 domain: match element.domain {
                     StorageDomain::Persistent => "persistent",
@@ -1395,7 +1667,7 @@ fn collect_storage_evidence(
                 },
                 slot: element.slot,
                 symbolic_path: format!("{:?}", element.slot_expr),
-                is_mapping_value: element.slot_expr.has_mapping(),
+                storage_path: storage_path_segments,
                 slot_delta: element.slot_delta,
                 offset: element.rshift,
                 field_width: element.field_width,
@@ -1593,5 +1865,63 @@ where
             "transient",
         ),
         evidence,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derives_array_stride_after_user_index_arithmetic() {
+        let checked_index = AffineExpr::calldata(0)
+            .multiply(U256::from(2))
+            .and_then(|index| index.add_constant(U256::from(1)))
+            .expect("small affine expression");
+        let storage_offset = checked_index
+            .multiply(U256::from(3))
+            .expect("small affine expression");
+
+        assert_eq!(checked_index.scale_from(&storage_offset), Some(3));
+    }
+
+    #[test]
+    fn does_not_treat_unrelated_index_terms_as_an_array_stride() {
+        let checked_index = AffineExpr::calldata(0);
+        let unrelated = AffineExpr::calldata(32);
+
+        assert_eq!(checked_index.scale_from(&unrelated), None);
+    }
+
+    #[test]
+    fn preserves_ordered_nested_storage_path() {
+        let expression = SlotExpr::Offset {
+            slots: 2,
+            base: Box::new(SlotExpr::DynamicArrayElement {
+                base: Box::new(SlotExpr::DynamicArray {
+                    base: Box::new(SlotExpr::Mapping {
+                        key_type: DynSolType::FixedBytes(4),
+                        base: Box::new(SlotExpr::Plain([0_u8; 32])),
+                    }),
+                }),
+                index: AffineExpr::calldata(0),
+                stride: 3,
+            }),
+        };
+
+        let mut path = Vec::new();
+        storage_path(&expression, &mut path);
+
+        assert!(matches!(
+            path.as_slice(),
+            [
+                StoragePathSegment::Mapping { .. },
+                StoragePathSegment::DynamicArray {
+                    index: Some(_),
+                    stride: Some(3),
+                },
+                StoragePathSegment::Offset { slots: 2 },
+            ]
+        ));
     }
 }

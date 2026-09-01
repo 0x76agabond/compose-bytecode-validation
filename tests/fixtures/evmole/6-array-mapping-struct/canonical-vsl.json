@@ -7,14 +7,14 @@
       "layout": [
         "0xf1",
         "0x53",
-        "0x03",
+        "0xf2",
         "0xff"
       ],
       "serializedLayout": [
         "0x01",
         "0xf1",
         "0x53",
-        "0x03",
+        "0xf2",
         "0xff"
       ],
       "slots": [
@@ -28,6 +28,37 @@
       "structName": "Storage",
       "virtualPath": "compose.validation.case6.mapping-value",
       "parentVirtualPath": null,
+      "diamondName": null
+    },
+    {
+      "id": "0xcef2d4337aa13547a99a0e4a2604e270358bf158026b10a29195bb1fa35da126",
+      "parentPath": "compose.validation.case6.mapping-value",
+      "kind": "immutable",
+      "codeWidth": 1,
+      "layout": [
+        "0x03",
+        "0x53",
+        "0x57"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0x03",
+        "0x53",
+        "0x57"
+      ],
+      "slots": [
+        [
+          160,
+          32,
+          64
+        ]
+      ],
+      "source": "slot-assignment",
+      "sourceName": "Canonical.sol",
+      "contractName": "Case6Canonical",
+      "structName": "Storage",
+      "virtualPath": "compose.validation.case6.mapping-value.0",
+      "parentVirtualPath": "compose.validation.case6.mapping-value",
       "diamondName": null
     }
   ]
