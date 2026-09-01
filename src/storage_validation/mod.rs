@@ -15,7 +15,7 @@ use crate::{
 };
 use std::collections::BTreeMap;
 use vsl::{
-    SemanticCompatibility, compare_semantic_types, expected_type_at,
+    SemanticCompatibility, compare_semantic_types, expected_field_start_at, expected_type_at,
     has_container_shape_contradiction, storage_trace_hints,
 };
 
@@ -30,9 +30,11 @@ struct VslVariableMatch {
     virtual_path: String,
     expected_type: Option<String>,
     expected_width: Option<u16>,
+    expected_field_start: Option<u8>,
+    mapping_layers: usize,
 }
 
-type WriteEvidenceKey = (Option<Slot>, u8, [u8; 4], Option<usize>, String);
+type WriteEvidenceKey = (Option<Slot>, usize, u8, [u8; 4], Option<usize>, String);
 
 /// Validates persistent `SSTORE` evidence against the supplied full-diamond VSL.
 pub fn validate(input: &StorageValidationInput) -> StorageValidationReport {
@@ -69,11 +71,13 @@ pub fn validate(input: &StorageValidationInput) -> StorageValidationReport {
     if std::env::var_os("COMPOSE_TRACE_STORAGE").is_some() {
         for evidence in &layouts.evidence {
             eprintln!(
-                "[storage-validation:evidence] domain={} slot={:?} path={} offset={} type={} known={} score={} write={} pc={:?} selector={} fallback={} mask={:?}",
+                "[storage-validation:evidence] domain={} slot={:?} path={} slot_delta={} offset={} field_width={:?} type={} known={} score={} write={} pc={:?} selector={} fallback={} mask={:?}",
                 evidence.domain,
                 evidence.slot,
                 evidence.symbolic_path,
+                evidence.slot_delta,
                 evidence.offset,
+                evidence.field_width,
                 evidence.inferred_type,
                 evidence.value_type_known,
                 evidence.score,
@@ -101,6 +105,7 @@ fn best_write_evidence(evidence: &[StorageEvidence]) -> Vec<&StorageEvidence> {
     {
         let key = (
             item.slot,
+            item.slot_delta,
             item.offset,
             item.selector,
             item.write_pc,
@@ -154,12 +159,27 @@ fn validate_write(
         });
         return;
     };
+    let observed_type = unwrap_mapping_layers(&evidence.inferred_type, matched.mapping_layers)
+        .unwrap_or_else(|| evidence.inferred_type.clone());
 
     if expected_type.contains("virtual-struct(") {
         report.uncertain_scopes.push(UncertainStorageScope {
             location,
             virtual_path: Some(matched.virtual_path),
             reason: "container child write is known, but its VSL member path is not reconstructed"
+                .to_owned(),
+        });
+        return;
+    }
+
+    // A mask proves a concrete mapping-value field write. If that value is
+    // not represented by a virtual child record, comparing it to the mapping
+    // root would turn missing path reconstruction into a false collision.
+    if evidence.is_mapping_value && matched.mapping_layers == 0 && evidence.field_width.is_some() {
+        report.uncertain_scopes.push(UncertainStorageScope {
+            location,
+            virtual_path: Some(matched.virtual_path),
+            reason: "mapping value write is known, but its VSL member path is not reconstructed"
                 .to_owned(),
         });
         return;
@@ -175,13 +195,52 @@ fn validate_write(
         return;
     }
 
-    if !evidence.value_type_known {
-        if has_container_shape_contradiction(&evidence.inferred_type, &expected_type) {
+    let Some(expected_width) = matched.expected_width else {
+        if let (Some(observed_width), Some(expected_start)) =
+            (evidence.field_width, matched.expected_field_start)
+        {
             report.collisions.push(StorageCollision {
                 location,
                 virtual_path: matched.virtual_path,
                 expected_type,
-                observed_type: evidence.inferred_type.clone(),
+                observed_type: observed_type.clone(),
+                reason: format!(
+                    "packed write starts at byte {} with width {observed_width} bits, but the VSL field starts at byte {expected_start}",
+                    evidence.offset
+                ),
+            });
+            return;
+        }
+        report.uncertain_scopes.push(UncertainStorageScope {
+            location,
+            virtual_path: Some(matched.virtual_path),
+            reason: "VSL has no field at the recovered byte offset".to_owned(),
+        });
+        return;
+    };
+
+    if let Some(observed_width) = evidence.field_width
+        && observed_width != expected_width
+    {
+        report.collisions.push(StorageCollision {
+            location,
+            virtual_path: matched.virtual_path,
+            expected_type,
+            observed_type: observed_type.clone(),
+            reason: format!(
+                "packed write width {observed_width} bits contradicts expected {expected_width} bits"
+            ),
+        });
+        return;
+    }
+
+    if !evidence.value_type_known {
+        if has_container_shape_contradiction(&observed_type, &expected_type) {
+            report.collisions.push(StorageCollision {
+                location,
+                virtual_path: matched.virtual_path,
+                expected_type,
+                observed_type: observed_type.clone(),
                 reason: "recovered container shape contradicts the VSL type".to_owned(),
             });
         } else {
@@ -194,15 +253,7 @@ fn validate_write(
         return;
     }
 
-    let Some(expected_width) = matched.expected_width else {
-        report.uncertain_scopes.push(UncertainStorageScope {
-            location,
-            virtual_path: Some(matched.virtual_path),
-            reason: "VSL has no field at the recovered byte offset".to_owned(),
-        });
-        return;
-    };
-    let Some(observed_width) = inferred_width(&evidence.inferred_type) else {
+    let Some(observed_width) = inferred_width(&observed_type) else {
         report.uncertain_scopes.push(UncertainStorageScope {
             location,
             virtual_path: Some(matched.virtual_path),
@@ -216,7 +267,7 @@ fn validate_write(
             location,
             virtual_path: matched.virtual_path,
             expected_type,
-            observed_type: evidence.inferred_type.clone(),
+            observed_type: observed_type.clone(),
             reason: format!(
                 "write width {observed_width} bits contradicts expected {expected_width} bits"
             ),
@@ -224,20 +275,20 @@ fn validate_write(
         return;
     }
 
-    match compare_semantic_types(&evidence.inferred_type, &expected_type) {
+    match compare_semantic_types(&observed_type, &expected_type) {
         SemanticCompatibility::Compatible | SemanticCompatibility::KeyMismatch => {
             report.validated_variables.push(ValidatedVariable {
                 location,
                 virtual_path: matched.virtual_path,
                 expected_type,
-                observed_type: evidence.inferred_type.clone(),
+                observed_type,
             });
         }
         SemanticCompatibility::Contradiction => report.collisions.push(StorageCollision {
             location,
             virtual_path: matched.virtual_path,
             expected_type,
-            observed_type: evidence.inferred_type.clone(),
+            observed_type,
             reason: "recovered bytecode variable contradicts the VSL type".to_owned(),
         }),
         SemanticCompatibility::Uncertain => report.uncertain_scopes.push(UncertainStorageScope {
@@ -267,18 +318,78 @@ fn match_vsl_variable(
         .find_map(|record| {
             let root = decode_slot(&record.id)?;
             let slot_index = slot_delta(&root, slot, record.slots.len())?;
-            let expected_width = expected_width_at(record, slot_index, evidence.offset);
-            let expected_type =
-                expected_type_at(record, &layout.records, slot_index, evidence.offset);
-            Some(VslVariableMatch {
-                virtual_path: format!(
-                    "{}.slot[{slot_index}].byte[{}]",
-                    record.virtual_path, evidence.offset
-                ),
-                expected_type,
-                expected_width,
-            })
+            let container_type = expected_type_at(record, &layout.records, slot_index, 0);
+            let child = container_type
+                .as_deref()
+                .and_then(virtual_struct_path)
+                .filter(|_| evidence.is_mapping_value)
+                .and_then(|path| {
+                    layout.records.iter().find(|child| {
+                        child.virtual_path == path
+                            && child.parent_virtual_path.as_deref()
+                                == Some(record.virtual_path.as_str())
+                    })
+                });
+
+            match child {
+                Some(child) => {
+                    vsl_variable_match(child, layout, evidence.slot_delta, evidence.offset, 1)
+                }
+                None => vsl_variable_match(record, layout, slot_index, evidence.offset, 0),
+            }
         })
+}
+
+fn vsl_variable_match(
+    record: &VirtualStorageLayoutRecord,
+    layout: &VirtualStorageLayout,
+    slot_index: usize,
+    offset: u8,
+    mapping_layers: usize,
+) -> Option<VslVariableMatch> {
+    record.slots.get(slot_index)?;
+    let expected_field_start = expected_field_start_at(record, slot_index, offset);
+    Some(VslVariableMatch {
+        virtual_path: format!("{}.slot[{slot_index}].byte[{offset}]", record.virtual_path),
+        expected_type: expected_type_at(record, &layout.records, slot_index, offset).or_else(
+            || {
+                expected_field_start
+                    .and_then(|start| expected_type_at(record, &layout.records, slot_index, start))
+            },
+        ),
+        expected_width: expected_width_at(record, slot_index, offset),
+        expected_field_start,
+        mapping_layers,
+    })
+}
+
+fn virtual_struct_path(expected_type: &str) -> Option<&str> {
+    let prefix = "virtual-struct(";
+    let start = expected_type.find(prefix)? + prefix.len();
+    let end = expected_type[start..].find(')')? + start;
+    Some(&expected_type[start..end])
+}
+
+fn unwrap_mapping_layers(value: &str, layers: usize) -> Option<String> {
+    let mut current = value.trim();
+    for _ in 0..layers {
+        let body = current.strip_prefix("mapping(")?.strip_suffix(')')?;
+        let mut depth = 0_i32;
+        let mut value_start = None;
+        for (index, window) in body.as_bytes().windows(2).enumerate() {
+            match window[0] {
+                b'(' | b'[' => depth += 1,
+                b')' | b']' => depth -= 1,
+                _ => {}
+            }
+            if depth == 0 && window == b"=>" {
+                value_start = Some(index + 2);
+                break;
+            }
+        }
+        current = body.get(value_start?..)?.trim();
+    }
+    Some(current.to_owned())
 }
 
 fn expected_width_at(
@@ -422,7 +533,10 @@ mod tests {
                 slot
             }),
             symbolic_path: "Plain(0x01)".to_owned(),
+            is_mapping_value: false,
+            slot_delta: 0,
             offset: 0,
+            field_width: None,
             inferred_type: "uint256".to_owned(),
             score: 1,
             is_write: true,
@@ -451,7 +565,10 @@ mod tests {
                 slot
             }),
             symbolic_path: "Plain(0x09)".to_owned(),
+            is_mapping_value: false,
+            slot_delta: 0,
             offset: 0,
+            field_width: None,
             inferred_type: "uint256".to_owned(),
             score: 1,
             is_write: true,

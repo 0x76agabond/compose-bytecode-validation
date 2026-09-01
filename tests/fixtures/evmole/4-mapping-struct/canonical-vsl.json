@@ -36,19 +36,29 @@
       "layout": [
         "0x03",
         "0x53",
-        "0x57"
+        "0x57",
+        "0x2f",
+        "0x2f"
       ],
       "serializedLayout": [
         "0x01",
         "0x03",
         "0x53",
-        "0x57"
+        "0x57",
+        "0x2f",
+        "0x2f"
       ],
       "slots": [
         [
           160,
           32,
           64
+        ],
+        [
+          256
+        ],
+        [
+          256
         ]
       ],
       "source": "slot-assignment",

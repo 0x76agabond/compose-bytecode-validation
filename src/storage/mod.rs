@@ -113,6 +113,15 @@ enum SlotExpr {
         key_type: DynSolType,
         base: Box<SlotExpr>,
     },
+    /// A compile-time slot displacement from a mapping or array value root.
+    ///
+    /// The generic layout output intentionally groups these under the same
+    /// container. Compose validation needs the displacement to match the VSL
+    /// child schema, so it is preserved symbolically here.
+    Offset {
+        base: Box<SlotExpr>,
+        slots: usize,
+    },
     DynamicArray {
         base: Box<SlotExpr>,
     },
@@ -154,6 +163,14 @@ fn should_surface_hashed_slot(preimage: &[u8]) -> bool {
 }
 
 impl SlotExpr {
+    fn has_mapping(&self) -> bool {
+        match self {
+            Self::Mapping { .. } => true,
+            Self::Offset { base, .. } | Self::DynamicArray { base } => base.has_mapping(),
+            Self::Plain(_) | Self::HashedConst { .. } | Self::UnknownHash { .. } => false,
+        }
+    }
+
     fn canonical_slot(&self) -> Option<Slot> {
         match self {
             SlotExpr::Plain(slot) => Some(*slot),
@@ -161,9 +178,9 @@ impl SlotExpr {
                 hash: slot,
                 preimage,
             } => should_surface_hashed_slot(preimage).then_some(*slot),
-            SlotExpr::Mapping { base, .. } | SlotExpr::DynamicArray { base } => {
-                base.canonical_slot()
-            }
+            SlotExpr::Mapping { base, .. }
+            | SlotExpr::Offset { base, .. }
+            | SlotExpr::DynamicArray { base } => base.canonical_slot(),
             SlotExpr::UnknownHash { .. } => None,
         }
     }
@@ -173,7 +190,9 @@ impl SlotExpr {
             SlotExpr::Plain(slot) | SlotExpr::HashedConst { hash: slot, .. } => {
                 SlotKey::Known(*slot)
             }
-            SlotExpr::Mapping { base, .. } | SlotExpr::DynamicArray { base } => base.slot_key(),
+            SlotExpr::Mapping { base, .. }
+            | SlotExpr::Offset { base, .. }
+            | SlotExpr::DynamicArray { base } => base.slot_key(),
             SlotExpr::UnknownHash { size, preimage } => SlotKey::UnknownHash {
                 size: *size,
                 preimage: preimage.clone(),
@@ -185,7 +204,7 @@ impl SlotExpr {
 fn mapping_depth(expr: &SlotExpr) -> usize {
     match expr {
         SlotExpr::Mapping { base, .. } => 1 + mapping_depth(base),
-        SlotExpr::DynamicArray { base } => mapping_depth(base),
+        SlotExpr::Offset { base, .. } | SlotExpr::DynamicArray { base } => mapping_depth(base),
         SlotExpr::Plain(_) | SlotExpr::HashedConst { .. } | SlotExpr::UnknownHash { .. } => 0,
     }
 }
@@ -304,13 +323,23 @@ struct StorageElement {
     slot: Option<Slot>,
     slot_expr: SlotExpr,
     stype: StorageType,
+    slot_delta: usize,
     rshift: u8, // in bytes
+    field_width: Option<u16>,
     is_write: bool,
     write_pc: Option<usize>,
     write_value_known: bool,
     last_and: Option<U256>,
     last_or2: Option<Element<Label>>,
 }
+
+struct WriteMetadata {
+    rshift: u8,
+    write_pc: usize,
+    value_known: bool,
+    field_width: Option<u16>,
+}
+
 impl std::fmt::Debug for StorageElement {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let slot_repr = self
@@ -419,9 +448,10 @@ fn mapping_key_type(
     }
 }
 
-fn normalize_slot_expr(slot_expr: &SlotExpr) -> (SlotKey, Option<Slot>, StorageType) {
+fn normalize_slot_expr(slot_expr: &SlotExpr) -> (SlotKey, Option<Slot>, StorageType, usize) {
     let mut current = slot_expr;
     let mut stype = StorageType::Base(DynSolType::Uint(256));
+    let mut slot_delta = 0_usize;
 
     loop {
         match current {
@@ -440,9 +470,62 @@ fn normalize_slot_expr(slot_expr: &SlotExpr) -> (SlotKey, Option<Slot>, StorageT
                 };
                 current = base;
             }
-            _ => return (current.slot_key(), current.canonical_slot(), stype),
+            SlotExpr::Offset { base, slots } => {
+                slot_delta = slot_delta.saturating_add(*slots);
+                current = base;
+            }
+            _ => {
+                return (
+                    current.slot_key(),
+                    current.canonical_slot(),
+                    stype,
+                    slot_delta,
+                );
+            }
         }
     }
+}
+
+fn constant_slot_delta(value: &Element<Label>) -> Option<usize> {
+    let value: U256 = value.into();
+    (value <= U256::from(usize::MAX)).then(|| value.to())
+}
+
+fn with_slot_delta(expr: SlotExpr, slots: usize) -> SlotExpr {
+    if slots == 0 {
+        return expr;
+    }
+    match expr {
+        SlotExpr::Offset {
+            base,
+            slots: current,
+        } => SlotExpr::Offset {
+            base,
+            slots: current.saturating_add(slots),
+        },
+        base => SlotExpr::Offset {
+            base: Box::new(base),
+            slots,
+        },
+    }
+}
+
+fn packed_field(mask: U256) -> Option<(u8, u16)> {
+    let cleared = !mask;
+    if cleared.is_zero() {
+        return None;
+    }
+    let bit_offset = cleared.trailing_zeros();
+    let width = (cleared >> bit_offset).trailing_ones();
+    if bit_offset >= 256
+        || width == 0
+        || !bit_offset.is_multiple_of(8)
+        || !width.is_multiple_of(8)
+        || (cleared >> bit_offset >> width) != U256::ZERO
+    {
+        return None;
+    }
+    Some(((bit_offset / 8) as u8, width as u16))
 }
 
 fn storage_slot_element(storage: &StorageElement) -> Element<Label> {
@@ -529,15 +612,14 @@ impl Storage {
         &mut self,
         domain: StorageDomain,
         slot: Element<Label>,
-        rshift: u8,
         vtype: DynSolType,
-        write_pc: usize,
-        write_value_known: bool,
+        metadata: WriteMetadata,
     ) {
-        let x = self.get(domain, slot, true, Some(write_pc));
+        let x = self.get(domain, slot, true, Some(metadata.write_pc));
         x.borrow_mut().stype.set_type(vtype);
-        x.borrow_mut().rshift = rshift;
-        x.borrow_mut().write_value_known = write_value_known;
+        x.borrow_mut().rshift = metadata.rshift;
+        x.borrow_mut().write_value_known = metadata.value_known;
+        x.borrow_mut().field_width = metadata.field_width;
     }
 
     fn load(&mut self, domain: StorageDomain, slot: Element<Label>) -> Rc<RefCell<StorageElement>> {
@@ -555,7 +637,7 @@ impl Storage {
             Some(Label::Keccak(_, expr)) => expr,
             _ => SlotExpr::Plain(slot.data),
         };
-        let (slot_key, canonical_slot, stype) = normalize_slot_expr(&slot_expr);
+        let (slot_key, canonical_slot, stype, slot_delta) = normalize_slot_expr(&slot_expr);
 
         let v = Rc::new(RefCell::new(StorageElement {
             domain,
@@ -563,7 +645,9 @@ impl Storage {
             slot: canonical_slot,
             slot_expr,
             stype,
+            slot_delta,
             rshift: 0,
+            field_width: None,
             is_write,
             write_pc,
             write_value_known: false,
@@ -634,7 +718,7 @@ fn analyze(
         }
 
         StepResult {
-            op: op::ADD | op::MUL | op::SUB | op::XOR | op::SHL,
+            op: op::ADD | op::MUL | op::SUB | op::XOR | op::SHL | op::SHR,
             args:
                 match_first_two!(
                     elabel!(lb @ (Label::Loaded(_) | Label::Typed(_))),
@@ -663,6 +747,12 @@ fn analyze(
 
         StepResult {
             op: op::CALLVALUE, ..
+        } => {
+            vm.stack.peek_mut()?.label = Some(Label::Typed(DynSolType::Uint(256)));
+        }
+
+        StepResult {
+            op: op::TIMESTAMP, ..
         } => {
             vm.stack.peek_mut()?.label = Some(Label::Typed(DynSolType::Uint(256)));
         }
@@ -696,8 +786,27 @@ fn analyze(
         }
 
         StepResult {
+            op: op::ADD,
+            args:
+                match_first_two!(
+                    elabel!(Label::Keccak(depth, expr)),
+                    value @ Element {
+                        label: Some(Label::Constant),
+                        ..
+                    }
+                ),
+            ..
+        } => {
+            let label = match constant_slot_delta(&value) {
+                Some(slots) => Label::Keccak(depth, with_slot_delta(expr, slots)),
+                None => Label::Keccak(depth, expr),
+            };
+            vm.stack.peek_mut()?.label = Some(label);
+        }
+
+        StepResult {
             op: op::ADD | op::SUB,
-            args: match_first_two!(elabel!(label @ Label::Keccak(_,_)), _),
+            args: match_first_two!(elabel!(label @ Label::Keccak(_, _)), _),
             ..
         } => {
             vm.stack.peek_mut()?.label = Some(label);
@@ -861,16 +970,34 @@ fn analyze(
             }
 
             match value.label {
-                Some(Label::Typed(t)) => st.store(domain, slot, 0, t, pc, true),
-                Some(Label::Constant) => st.store(domain, slot, 0, DynSolType::Uint(256), pc, true),
+                Some(Label::Typed(t)) => st.store(
+                    domain,
+                    slot,
+                    t,
+                    WriteMetadata {
+                        rshift: 0,
+                        write_pc: pc,
+                        value_known: true,
+                        field_width: Some(256),
+                    },
+                ),
+                Some(Label::Constant) => st.store(
+                    domain,
+                    slot,
+                    DynSolType::Uint(256),
+                    WriteMetadata {
+                        rshift: 0,
+                        write_pc: pc,
+                        value_known: true,
+                        field_width: Some(256),
+                    },
+                ),
                 Some(Label::Loaded(sl)) => {
                     let sbr = sl.borrow();
                     if let Some(lor) = &sbr.last_or2 {
                         if let Some(land) = sbr.last_and {
-                            let tv = land.trailing_ones();
-
-                            let shifted_mask = land >> tv;
-                            let sz = shifted_mask.trailing_zeros();
+                            let field = packed_field(land);
+                            let (offset, width) = field.unwrap_or((0, 256));
 
                             let (dt, known) = match &lor.label {
                                 Some(Label::Typed(tp)) => (tp.clone(), true),
@@ -883,15 +1010,25 @@ fn analyze(
                                     )
                                 }
                                 _ => {
-                                    let inferred = if sz == 160 {
+                                    let inferred = if width == 160 {
                                         DynSolType::Address
                                     } else {
-                                        DynSolType::Uint(sz)
+                                        DynSolType::Uint(width as usize)
                                     };
                                     (inferred, true)
                                 }
                             };
-                            st.store(domain, slot, (tv / 8) as u8, dt, pc, known);
+                            st.store(
+                                domain,
+                                slot,
+                                dt,
+                                WriteMetadata {
+                                    rshift: offset,
+                                    write_pc: pc,
+                                    value_known: known,
+                                    field_width: field.map(|(_, width)| width),
+                                },
+                            );
                         } else {
                             let (dt, known) = match &lor.label {
                                 Some(Label::Typed(tp) | Label::Packed(tp)) => (tp.clone(), true),
@@ -907,14 +1044,44 @@ fn analyze(
                                     sbr.stype.has_known_internal_type(),
                                 ),
                             };
-                            st.store(domain, slot, 0, dt, pc, known);
+                            st.store(
+                                domain,
+                                slot,
+                                dt,
+                                WriteMetadata {
+                                    rshift: 0,
+                                    write_pc: pc,
+                                    value_known: known,
+                                    field_width: None,
+                                },
+                            );
                         }
                     } else {
                         let known = sbr.stype.has_known_internal_type();
-                        st.store(domain, slot, 0, sbr.stype.get_internal_type(), pc, known);
+                        st.store(
+                            domain,
+                            slot,
+                            sbr.stype.get_internal_type(),
+                            WriteMetadata {
+                                rshift: 0,
+                                write_pc: pc,
+                                value_known: known,
+                                field_width: None,
+                            },
+                        );
                     }
                 }
-                _ => st.store(domain, slot, 0, DynSolType::Uint(256), pc, false),
+                _ => st.store(
+                    domain,
+                    slot,
+                    DynSolType::Uint(256),
+                    WriteMetadata {
+                        rshift: 0,
+                        write_pc: pc,
+                        value_known: false,
+                        field_width: None,
+                    },
+                ),
             }
         }
 
@@ -1145,7 +1312,7 @@ fn analyze_one_function(
                 .into_iter()
                 .filter(|e| {
                     let br = e.borrow();
-                    !(br.rshift > 0 && br.stype.requires_zero_offset())
+                    !(br.rshift > 0 && br.stype.requires_zero_offset() && !br.is_write)
                 })
                 .collect();
             let string_like_elements: Vec<_> = v
@@ -1159,7 +1326,7 @@ fn analyze_one_function(
                 .filter(|e| {
                     let br = e.borrow();
                     if let StorageType::Map(_, _) = br.stype {
-                        br.rshift == 0
+                        br.rshift == 0 || br.is_write
                     } else {
                         false
                     }
@@ -1198,7 +1365,10 @@ pub(crate) struct StorageEvidence {
     pub domain: &'static str,
     pub slot: Option<Slot>,
     pub symbolic_path: String,
+    pub is_mapping_value: bool,
+    pub slot_delta: usize,
     pub offset: u8,
+    pub field_width: Option<u16>,
     pub inferred_type: String,
     pub score: usize,
     pub is_write: bool,
@@ -1225,7 +1395,10 @@ fn collect_storage_evidence(
                 },
                 slot: element.slot,
                 symbolic_path: format!("{:?}", element.slot_expr),
+                is_mapping_value: element.slot_expr.has_mapping(),
+                slot_delta: element.slot_delta,
                 offset: element.rshift,
+                field_width: element.field_width,
                 inferred_type: format!("{:?}", element.stype),
                 score: element.stype.get_score(),
                 is_write: element.is_write,

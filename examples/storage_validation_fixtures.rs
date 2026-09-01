@@ -13,6 +13,7 @@ struct Variant {
 struct Case {
     name: &'static str,
     directory: &'static str,
+    minimum_canonical_validated: usize,
     variants: &'static [Variant],
 }
 
@@ -20,6 +21,7 @@ const CASES: &[Case] = &[
     Case {
         name: "1-normal",
         directory: "1-normal",
+        minimum_canonical_validated: 0,
         variants: &[
             Variant {
                 name: "canonical",
@@ -40,6 +42,7 @@ const CASES: &[Case] = &[
     Case {
         name: "2-constant-key",
         directory: "2-constant-key",
+        minimum_canonical_validated: 0,
         variants: &[
             Variant {
                 name: "canonical",
@@ -60,6 +63,7 @@ const CASES: &[Case] = &[
     Case {
         name: "3-storage-key",
         directory: "3-storage-key",
+        minimum_canonical_validated: 0,
         variants: &[
             Variant {
                 name: "canonical",
@@ -87,6 +91,7 @@ const CASES: &[Case] = &[
     Case {
         name: "4-mapping-struct",
         directory: "4-mapping-struct",
+        minimum_canonical_validated: 5,
         variants: &[
             Variant {
                 name: "canonical",
@@ -100,13 +105,14 @@ const CASES: &[Case] = &[
                 source: "Incompatible.sol",
                 contract: "Case4Incompatible",
                 canonical: false,
-                must_collide: false,
+                must_collide: true,
             },
         ],
     },
     Case {
         name: "5-array-struct",
         directory: "5-array-struct",
+        minimum_canonical_validated: 0,
         variants: &[
             Variant {
                 name: "canonical",
@@ -134,6 +140,7 @@ const CASES: &[Case] = &[
     Case {
         name: "6-array-mapping-struct",
         directory: "6-array-mapping-struct",
+        minimum_canonical_validated: 0,
         variants: &[
             Variant {
                 name: "canonical-mapping-address",
@@ -218,6 +225,11 @@ fn main() {
                 assert!(
                     report.collisions.is_empty(),
                     "{} canonical bytecode contradicts its own VSL",
+                    case.name
+                );
+                assert!(
+                    report.validated_variables.len() >= case.minimum_canonical_validated,
+                    "{} canonical bytecode recovered too few VSL variables",
                     case.name
                 );
             } else if variant.must_collide {

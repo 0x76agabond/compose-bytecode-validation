@@ -158,6 +158,24 @@ pub(crate) fn expected_type_at(
         .map(|field| field.ty.display())
 }
 
+pub(crate) fn expected_field_start_at(
+    record: &VirtualStorageLayoutRecord,
+    slot_index: usize,
+    offset: u8,
+) -> Option<u8> {
+    let group = record.slots.get(slot_index)?;
+    let mut start = 0_u16;
+    for width in group {
+        let end = start.saturating_add(*width);
+        let bit_offset = u16::from(offset).saturating_mul(8);
+        if bit_offset >= start && bit_offset < end {
+            return Some((start / 8) as u8);
+        }
+        start = end;
+    }
+    None
+}
+
 /// Compiles the parts of VSL that can anchor a bytecode storage trace without
 /// deciding its compatibility. At present this is deliberately limited to
 /// scalar storage keys and mapping key chains.

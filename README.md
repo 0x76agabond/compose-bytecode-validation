@@ -46,6 +46,30 @@ An `uncertainScope` always has a concrete recovered storage slot, selector,
 program counter, and reason. A write with no recoverable root is a diagnostic,
 not an unspecified global warning.
 
+## What Differs From Original EVMole
+
+Original EVMole is a general bytecode-to-Solidity recovery tool. Its storage
+output is designed to summarize inferred contract state, so it may intentionally
+collapse `KECCAK256 + constant` accesses back to a mapping or array root.
+
+This fork keeps EVMole's interpreter, CFG, ABI argument recovery, and symbolic
+storage tracer as the analysis substrate, then adds a Compose-specific layer:
+
+- it accepts the canonical full-diamond VSL as an external input rather than
+  inferring the entire source layout from bytecode;
+- it retains `SSTORE` evidence needed for contradiction checks, including
+  persistent root slot, constant mapping-value slot delta, packed byte offset,
+  field width, selector, and program counter;
+- it compares only concrete writes against declared VSL variables and returns
+  a proven collision, validation, scoped uncertainty, or unresolved-root
+  diagnostic; and
+- it preserves generic-decompiler uncertainty instead of letting VSL turn an
+  ambiguous bytecode trace into a safe verdict.
+
+The scope is deliberately narrower than a complete decompiler: the validator
+tries to prove a bytecode/VSL contradiction, not reconstruct every storage
+variable that a facet could access.
+
 ## Historical Inference Experiments
 
 `src/compose/` runs both paths over the same raw storage trace:
@@ -76,9 +100,9 @@ against the canonical VSL.
 | `1-normal` | Packed nested-struct width shifts | Canonical writes validate; incompatible slot shifts produce collisions. |
 | `2-constant-key` | Constant mapping keys and packed dynamic-array width | VSL anchors constant keys; canonical array writes validate and width mismatch collides. |
 | `3-storage-key` | Storage-derived mapping keys and dynamic/fixed indexes | VSL anchors the loaded `uint64` key; dynamic and fixed packed element mismatches collide. |
-| `4-mapping-struct` | Reordered packed members inside a mapping value | Root is known; member path reconstruction remains scoped uncertainty. |
+| `4-mapping-struct` | Reordered packed members inside a mapping value | Mapping-value child slots and packed fields validate; reordered members collide. |
 | `5-array-struct` | Reordered struct arrays and scalar-array replacement | Root is known; array child path reconstruction remains scoped uncertainty. |
-| `6-array-mapping-struct` | Mapping-to-address versus mapping-to-array-struct | Canonical mapping validates and both incompatible container shapes collide. |
+| `6-array-mapping-struct` | Mapping-to-address versus mapping-to-array-struct | Mapping value roots are recovered; missing child paths remain scoped uncertainty. |
 
 An inferred fallback `uint256` cannot prove a collision. The raw tracer marks
 whether the write value type was actually recovered; fallback values are
@@ -92,35 +116,37 @@ families:
 
 | Fixture | Variant | Collisions | Validated | Scoped uncertainty |
 | --- | --- | ---: | ---: | ---: |
-| `1-normal` | canonical | 0 | 8 | 3 |
-| `1-normal` | incompatible packed width | 2 | 1 | 2 |
-| `2-constant-key` | canonical | 0 | 4 | 0 |
-| `2-constant-key` | incompatible dynamic width | 1 | 3 | 0 |
-| `3-storage-key` | canonical | 0 | 8 | 0 |
+| `1-normal` | canonical | 0 | 9 | 2 |
+| `1-normal` | incompatible packed width | 2 | 3 | 0 |
+| `2-constant-key` | canonical | 0 | 2 | 2 |
+| `2-constant-key` | incompatible dynamic width | 1 | 1 | 2 |
+| `3-storage-key` | canonical | 0 | 7 | 1 |
 | `3-storage-key` | incompatible dynamic width | 2 | 0 | 0 |
 | `3-storage-key` | incompatible fixed width | 2 | 0 | 0 |
-| `4-mapping-struct` | canonical | 0 | 0 | 3 |
-| `4-mapping-struct` | incompatible reordered members | 0 | 0 | 3 |
+| `4-mapping-struct` | canonical | 0 | 5 | 0 |
+| `4-mapping-struct` | incompatible reordered members | 2 | 3 | 0 |
 | `5-array-struct` | canonical | 0 | 0 | 3 |
 | `5-array-struct` | incompatible reordered members | 0 | 0 | 3 |
 | `5-array-struct` | incompatible scalar array | 0 | 0 | 1 |
-| `6-array-mapping-struct` | canonical | 0 | 1 | 0 |
-| `6-array-mapping-struct` | incompatible array-only value | 1 | 0 | 1 |
-| `6-array-mapping-struct` | incompatible array-and-fields value | 1 | 1 | 1 |
+| `6-array-mapping-struct` | canonical | 0 | 0 | 1 |
+| `6-array-mapping-struct` | incompatible array-only value | 0 | 0 | 2 |
+| `6-array-mapping-struct` | incompatible array-and-fields value | 0 | 0 | 4 |
 
 All variants currently complete without an unresolved-root diagnostic. The
 engine reliably tracks root slots, static slot shifts, selectors, program
-counters, constant mapping keys, and storage-derived mapping keys. It also
-proves container-shape contradictions in case 6.
+counters, constant mapping keys, and storage-derived mapping keys.
 
 VSL-derived trace hints now recover mapping key types for constant and
 storage-loaded keys. Packed read-modify-write values retain their ABI type
 through dynamic index shifting, including Solidity's boolean normalization.
 
-The next implementation target is symbolic child-path reconstruction for
-struct members inside mappings or arrays. Cases 4 and 5 retain a concrete root
-but not enough member/index/stride information to challenge the corresponding
-VSL child, so they remain scoped uncertainty.
+Mapping-value structs now retain constant child-slot deltas from `KECCAK256 +
+constant` and packed write masks. Case 4 therefore validates the canonical
+mapping value and proves the reordered member contradiction. The next target is
+array child-path reconstruction: case 5 still has a concrete root but not the
+member index/stride information required to challenge its VSL child. Other
+mapping values without a virtual child, including case 6, remain explicitly
+scoped uncertainty rather than false collisions.
 
 ## Run the PoC
 
