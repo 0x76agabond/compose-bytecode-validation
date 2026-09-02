@@ -147,9 +147,7 @@ const CASES: &[Case] = &[
     Case {
         name: "6-array-mapping-struct",
         directory: "6-array-mapping-struct",
-        // Recursive VSL matching is deliberately deferred. The fixture keeps
-        // recording current evidence without claiming complete case-6 support.
-        minimum_canonical_validated: 0,
+        minimum_canonical_validated: 3,
         variants: &[
             Variant {
                 name: "canonical-mapping-array-struct",
@@ -161,13 +159,13 @@ const CASES: &[Case] = &[
                 name: "incompatible-mapping-array-struct",
                 source: "IncompatibleOnlyArray.sol",
                 contract: "Case6IncompatibleOnlyArray",
-                expectation: Expectation::CollisionOrUncertain,
+                expectation: Expectation::Collision,
             },
             Variant {
                 name: "incompatible-mapping-array-and-fields",
                 source: "IncompatibleArrayAndFields.sol",
                 contract: "Case6IncompatibleArrayAndFields",
-                expectation: Expectation::CollisionOrUncertain,
+                expectation: Expectation::Collision,
             },
         ],
     },

@@ -16,7 +16,8 @@ use crate::{
 use std::collections::BTreeMap;
 use vsl::{
     SemanticCompatibility, compare_semantic_types, expected_field_start_at, expected_type_at,
-    has_container_shape_contradiction, storage_trace_hints,
+    has_container_shape_contradiction, raw_expected_type_at, storage_trace_hints,
+    virtual_struct_child,
 };
 
 pub use types::{
@@ -33,16 +34,30 @@ struct VslVariableMatch {
     expected_field_start: Option<u8>,
     mapping_layers: usize,
     dynamic_array_layers: usize,
-    expected_array_stride: Option<usize>,
-    observed_array_stride: Option<usize>,
+    array_strides: Vec<(usize, usize)>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 struct ContainerMatch {
     mapping_layers: usize,
     dynamic_array_layers: usize,
-    expected_array_stride: Option<usize>,
     observed_array_stride: Option<usize>,
+}
+
+enum VslPathMatch {
+    Matched(VslVariableMatch),
+    Contradiction {
+        virtual_path: String,
+        expected_type: String,
+        reason: String,
+    },
+    NotFound,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VslCursorState {
+    Field,
+    StructRoot,
 }
 
 impl ContainerMatch {
@@ -66,7 +81,6 @@ impl ContainerMatch {
                 path.iter()
                     .any(|segment| matches!(segment, StoragePathSegment::DynamicArray { .. })),
             ),
-            expected_array_stride: None,
             observed_array_stride: dynamic_array.flatten(),
         }
     }
@@ -189,13 +203,30 @@ fn validate_write(
         pc: evidence.write_pc,
         symbolic_path: evidence.symbolic_path.clone(),
     };
-    let Some(matched) = match_vsl_variable(evidence, layout) else {
-        report.uncertain_scopes.push(UncertainStorageScope {
-            location,
-            virtual_path: None,
-            reason: "write root is not declared by the canonical VSL".to_owned(),
-        });
-        return;
+    let matched = match match_vsl_variable(evidence, layout) {
+        VslPathMatch::Matched(matched) => matched,
+        VslPathMatch::Contradiction {
+            virtual_path,
+            expected_type,
+            reason,
+        } => {
+            report.collisions.push(StorageCollision {
+                location,
+                virtual_path,
+                expected_type,
+                observed_type: evidence.inferred_type.clone(),
+                reason,
+            });
+            return;
+        }
+        VslPathMatch::NotFound => {
+            report.uncertain_scopes.push(UncertainStorageScope {
+                location,
+                virtual_path: None,
+                reason: "write root is not declared by the canonical VSL".to_owned(),
+            });
+            return;
+        }
     };
 
     let Some(expected_type) = matched.expected_type else {
@@ -213,9 +244,10 @@ fn validate_write(
     )
     .unwrap_or_else(|| evidence.inferred_type.clone());
 
-    if let (Some(expected_stride), Some(observed_stride)) =
-        (matched.expected_array_stride, matched.observed_array_stride)
-        && expected_stride != observed_stride
+    if let Some((expected_stride, observed_stride)) = matched
+        .array_strides
+        .iter()
+        .find(|(expected, observed)| expected != observed)
     {
         report.collisions.push(StorageCollision {
             location,
@@ -374,7 +406,249 @@ fn is_dynamic_array_length_write(evidence: &StorageEvidence, expected_type: &str
         && expected_type.trim().ends_with("[]")
 }
 
-fn match_vsl_variable(
+fn match_vsl_variable(evidence: &StorageEvidence, layout: &VirtualStorageLayout) -> VslPathMatch {
+    match match_recursive_vsl_variable(evidence, layout) {
+        VslPathMatch::NotFound => match_flat_vsl_variable(evidence, layout)
+            .map(VslPathMatch::Matched)
+            .unwrap_or(VslPathMatch::NotFound),
+        result => result,
+    }
+}
+
+fn match_recursive_vsl_variable(
+    evidence: &StorageEvidence,
+    layout: &VirtualStorageLayout,
+) -> VslPathMatch {
+    if !evidence.storage_path.iter().any(|segment| {
+        matches!(
+            segment,
+            StoragePathSegment::Mapping { .. } | StoragePathSegment::DynamicArray { .. }
+        )
+    }) {
+        return VslPathMatch::NotFound;
+    }
+
+    let Some(slot) = evidence.slot.as_ref() else {
+        return VslPathMatch::NotFound;
+    };
+    for root_record in layout
+        .records
+        .iter()
+        .filter(|record| record.parent_virtual_path.is_none())
+    {
+        let Some(root) = decode_slot(&root_record.id) else {
+            continue;
+        };
+        let Some(slot_index) = slot_delta(&root, slot, root_record.slots.len()) else {
+            continue;
+        };
+        let result = match_recursive_vsl_root(evidence, layout, root_record, slot_index);
+        if !matches!(result, VslPathMatch::NotFound) {
+            return result;
+        }
+    }
+    VslPathMatch::NotFound
+}
+
+fn match_recursive_vsl_root(
+    evidence: &StorageEvidence,
+    layout: &VirtualStorageLayout,
+    root_record: &VirtualStorageLayoutRecord,
+    initial_slot_index: usize,
+) -> VslPathMatch {
+    let mut record = root_record;
+    let mut slot_index = initial_slot_index;
+    let Some(mut current) = raw_expected_type_at(record, slot_index, 0) else {
+        return VslPathMatch::NotFound;
+    };
+    let mut containers = ContainerMatch::default();
+    let mut array_strides = Vec::new();
+    let mut saw_container = false;
+    let mut resolved_virtual_child = false;
+    let mut cursor_state = VslCursorState::Field;
+
+    // Transition table: container segments unwrap the current field schema;
+    // offsets select either a root field or a field in the current child struct.
+    for segment in &evidence.storage_path {
+        match segment {
+            StoragePathSegment::Offset { slots } => {
+                if matches!(cursor_state, VslCursorState::StructRoot) {
+                    slot_index = *slots;
+                    let Some(next) = raw_expected_type_at(record, slot_index, 0) else {
+                        return VslPathMatch::Contradiction {
+                            virtual_path: format!("{}.slot[{slot_index}]", record.virtual_path),
+                            expected_type: format!("virtual-struct({})", record.virtual_path),
+                            reason:
+                                "bytecode storage path selects a slot beyond the VSL struct span"
+                                    .to_owned(),
+                        };
+                    };
+                    current = next;
+                    cursor_state = VslCursorState::Field;
+                } else if current.is_virtual_struct() {
+                    let Some(child) = virtual_struct_child(record, &layout.records, slot_index)
+                    else {
+                        return VslPathMatch::NotFound;
+                    };
+                    record = child;
+                    slot_index = *slots;
+                    let Some(next) = raw_expected_type_at(record, slot_index, 0) else {
+                        return VslPathMatch::NotFound;
+                    };
+                    current = next;
+                    resolved_virtual_child = true;
+                    cursor_state = VslCursorState::Field;
+                } else if !saw_container {
+                    let Some(next_slot_index) = slot_index.checked_add(*slots) else {
+                        return VslPathMatch::NotFound;
+                    };
+                    slot_index = next_slot_index;
+                    let Some(next) = raw_expected_type_at(record, slot_index, 0) else {
+                        return VslPathMatch::NotFound;
+                    };
+                    current = next;
+                } else {
+                    return VslPathMatch::NotFound;
+                }
+            }
+            StoragePathSegment::Mapping { .. } => {
+                if current.is_virtual_struct() {
+                    if !resolve_virtual_cursor(
+                        &mut record,
+                        &mut slot_index,
+                        &mut current,
+                        &layout.records,
+                    ) {
+                        return VslPathMatch::NotFound;
+                    }
+                    resolved_virtual_child = true;
+                }
+                let Some(value) = current.mapping_value() else {
+                    return container_path_contradiction(
+                        record,
+                        slot_index,
+                        &current.display(),
+                        "mapping",
+                    );
+                };
+                current = value.clone();
+                containers.mapping_layers += 1;
+                saw_container = true;
+                cursor_state = VslCursorState::Field;
+                if current.is_virtual_struct() {
+                    if !resolve_virtual_cursor(
+                        &mut record,
+                        &mut slot_index,
+                        &mut current,
+                        &layout.records,
+                    ) {
+                        return VslPathMatch::NotFound;
+                    }
+                    resolved_virtual_child = true;
+                    cursor_state = VslCursorState::StructRoot;
+                }
+            }
+            StoragePathSegment::DynamicArray { index, stride } => {
+                if current.is_virtual_struct() {
+                    if !resolve_virtual_cursor(
+                        &mut record,
+                        &mut slot_index,
+                        &mut current,
+                        &layout.records,
+                    ) {
+                        return VslPathMatch::NotFound;
+                    }
+                    resolved_virtual_child = true;
+                }
+                let Some(element) = current.dynamic_array_element() else {
+                    return container_path_contradiction(
+                        record,
+                        slot_index,
+                        &current.display(),
+                        "dynamic array",
+                    );
+                };
+                current = element.clone();
+                containers.dynamic_array_layers += 1;
+                saw_container = true;
+                cursor_state = VslCursorState::Field;
+                if current.is_virtual_struct() {
+                    let Some(child) = virtual_struct_child(record, &layout.records, slot_index)
+                    else {
+                        return VslPathMatch::NotFound;
+                    };
+                    if let Some(observed_stride) = stride.filter(|_| index.is_some()) {
+                        array_strides.push((child.slots.len(), observed_stride));
+                    }
+                    record = child;
+                    slot_index = 0;
+                    let Some(next) = raw_expected_type_at(record, slot_index, 0) else {
+                        return VslPathMatch::NotFound;
+                    };
+                    current = next;
+                    resolved_virtual_child = true;
+                    cursor_state = VslCursorState::StructRoot;
+                }
+            }
+        }
+    }
+
+    if current.is_virtual_struct()
+        && !resolve_virtual_cursor(&mut record, &mut slot_index, &mut current, &layout.records)
+    {
+        return VslPathMatch::NotFound;
+    }
+    if !resolved_virtual_child {
+        return VslPathMatch::NotFound;
+    }
+
+    vsl_variable_match(
+        record,
+        layout,
+        slot_index,
+        evidence.offset,
+        containers,
+        array_strides,
+    )
+    .map(VslPathMatch::Matched)
+    .unwrap_or(VslPathMatch::NotFound)
+}
+
+fn resolve_virtual_cursor<'a>(
+    record: &mut &'a VirtualStorageLayoutRecord,
+    slot_index: &mut usize,
+    current: &mut vsl::VslType,
+    all_records: &'a [VirtualStorageLayoutRecord],
+) -> bool {
+    if !current.is_virtual_struct() {
+        return true;
+    }
+    let Some(child) = virtual_struct_child(record, all_records, *slot_index) else {
+        return false;
+    };
+    let Some(next) = raw_expected_type_at(child, 0, 0) else {
+        return false;
+    };
+    *record = child;
+    *slot_index = 0;
+    *current = next;
+    true
+}
+
+fn container_path_contradiction(
+    record: &VirtualStorageLayoutRecord,
+    slot_index: usize,
+    expected_type: &str,
+    observed_container: &str,
+) -> VslPathMatch {
+    VslPathMatch::Contradiction {
+        virtual_path: format!("{}.slot[{slot_index}]", record.virtual_path),
+        expected_type: expected_type.to_owned(),
+        reason: format!("bytecode storage path uses {observed_container}, but the VSL does not"),
+    }
+}
+
+fn match_flat_vsl_variable(
     evidence: &StorageEvidence,
     layout: &VirtualStorageLayout,
 ) -> Option<VslVariableMatch> {
@@ -413,13 +687,11 @@ fn match_vsl_variable(
                     layout,
                     evidence.slot_delta,
                     evidence.offset,
-                    ContainerMatch {
-                        expected_array_stride: containers
-                            .observed_array_stride
-                            .is_some()
-                            .then_some(child.slots.len()),
-                        ..containers
-                    },
+                    containers,
+                    containers
+                        .observed_array_stride
+                        .map(|observed| vec![(child.slots.len(), observed)])
+                        .unwrap_or_default(),
                 ),
                 None => vsl_variable_match(
                     record,
@@ -427,6 +699,7 @@ fn match_vsl_variable(
                     slot_index,
                     evidence.offset,
                     ContainerMatch::default(),
+                    Vec::new(),
                 ),
             }
         })
@@ -438,6 +711,7 @@ fn vsl_variable_match(
     slot_index: usize,
     offset: u8,
     container: ContainerMatch,
+    array_strides: Vec<(usize, usize)>,
 ) -> Option<VslVariableMatch> {
     record.slots.get(slot_index)?;
     let expected_field_start = expected_field_start_at(record, slot_index, offset);
@@ -453,8 +727,7 @@ fn vsl_variable_match(
         expected_field_start,
         mapping_layers: container.mapping_layers,
         dynamic_array_layers: container.dynamic_array_layers,
-        expected_array_stride: container.expected_array_stride,
-        observed_array_stride: container.observed_array_stride,
+        array_strides,
     })
 }
 

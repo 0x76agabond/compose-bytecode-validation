@@ -124,7 +124,7 @@ pub(crate) enum VslType {
 }
 
 impl VslType {
-    fn display(&self) -> String {
+    pub(crate) fn display(&self) -> String {
         match self {
             Self::Scalar { name, .. } => name.clone(),
             Self::Mapping(key, value) => {
@@ -136,6 +136,24 @@ impl VslType {
             Self::VirtualStruct => "virtual-struct".to_owned(),
             Self::Unknown => "unknown".to_owned(),
         }
+    }
+
+    pub(crate) fn mapping_value(&self) -> Option<&Self> {
+        let Self::Mapping(_, value) = self else {
+            return None;
+        };
+        Some(value)
+    }
+
+    pub(crate) fn dynamic_array_element(&self) -> Option<&Self> {
+        let Self::DynamicArray(element) = self else {
+            return None;
+        };
+        Some(element)
+    }
+
+    pub(crate) fn is_virtual_struct(&self) -> bool {
+        matches!(self, Self::VirtualStruct)
     }
 }
 
@@ -156,6 +174,32 @@ pub(crate) fn expected_type_at(
         .into_iter()
         .find(|field| field.slot_index == slot_index && field.offset == offset)
         .map(|field| field.ty.display())
+}
+
+/// Returns the field schema without replacing a virtual struct with its
+/// display-only marker. Recursive storage validation uses this to follow the
+/// child record declared at the current parent slot.
+pub(crate) fn raw_expected_type_at(
+    record: &VirtualStorageLayoutRecord,
+    slot_index: usize,
+    offset: u8,
+) -> Option<VslType> {
+    semantic_fields(record, &[])
+        .into_iter()
+        .find(|field| field.slot_index == slot_index && field.offset == offset)
+        .map(|field| field.ty)
+}
+
+pub(crate) fn virtual_struct_child<'a>(
+    record: &'a VirtualStorageLayoutRecord,
+    all_records: &'a [VirtualStorageLayoutRecord],
+    slot_index: usize,
+) -> Option<&'a VirtualStorageLayoutRecord> {
+    let expected_path = format!("{}.{}", record.virtual_path, slot_index);
+    all_records.iter().find(|child| {
+        child.virtual_path == expected_path
+            && child.parent_virtual_path.as_deref() == Some(record.virtual_path.as_str())
+    })
 }
 
 pub(crate) fn expected_field_start_at(
