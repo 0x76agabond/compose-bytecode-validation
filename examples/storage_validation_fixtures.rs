@@ -176,6 +176,32 @@ const CASES: &[Case] = &[
             },
         ],
     },
+    Case {
+        name: "7-full-storage",
+        directory: "7-full-storage",
+        minimum_canonical_validated: 24,
+        maximum_canonical_uncertain: 0,
+        variants: &[
+            Variant {
+                name: "canonical-full-storage",
+                source: "Canonical.sol",
+                contract: "FullStorageFacet",
+                expectation: Expectation::Canonical,
+            },
+            Variant {
+                name: "compatible-prefix-storage",
+                source: "Compatible.sol",
+                contract: "CompatibleStorageFacet",
+                expectation: Expectation::CompatibleEvidence,
+            },
+            Variant {
+                name: "incompatible-full-storage",
+                source: "Incompatible.sol",
+                contract: "IncompatibleStorageFacet",
+                expectation: Expectation::Collision,
+            },
+        ],
+    },
 ];
 
 fn decode_hex(value: &str) -> Vec<u8> {

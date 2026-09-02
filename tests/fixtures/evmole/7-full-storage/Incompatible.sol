@@ -65,13 +65,25 @@ contract IncompatibleStorageFacet {
     bytes32 private constant STORAGE_POSITION =
         keccak256("compose.fixture.virtual-storage");
 
-    function writeIncompatibleFixedFive(address value) external {
-        _storage().fixedFive[0] = value;
+    function writeIncompatibleContainers(
+        address account,
+        uint256 key,
+        address value,
+        uint16 packedValue
+    ) external {
+        Storage storage s = _storage();
+        s.mapToDynamicArray[key].push(value);
+        s.dynamicValues.push(value);
+        s.packedDynamicValues.push(packedValue);
+        s.childByAddress[account].amount = value;
     }
 
-    function exportSelectors() external pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](1);
-        selectors[0] = this.writeIncompatibleFixedFive.selector;
+    function writeIncompatibleFixed(address value, uint256 index) external {
+        Storage storage s = _storage();
+        s.fixedFive[index % 5] = value;
+        s.fixedThreeHundred[index % 300] = value;
+        s.nestedFixed[index % 10][index % 5] = value;
+        s.fixedChildren[index % 2].amount = value;
     }
 
     function _storage() private pure returns (Storage storage s) {

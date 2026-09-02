@@ -1,7 +1,7 @@
 # Compose Bytecode Validation
 
-Research PoC for validating a Compose facet's deployed runtime bytecode against
-its Solidity-derived Virtual Storage Layout (VSL).
+Compose's Rust bytecode storage validator. It validates a facet's deployed
+runtime bytecode against its Solidity-derived Virtual Storage Layout (VSL).
 
 This is not a general-purpose Solidity decompiler and it does not attempt to
 reconstruct a complete contract layout from bytecode. Compose already has a
@@ -82,7 +82,7 @@ identity are storage compatibility evidence.
 
 ## Fixture Coverage
 
-The six fixtures in `tests/fixtures/evmole/` are write-based challenge suites.
+The seven fixtures in `tests/fixtures/evmole/` are write-based challenge suites.
 Each directory contains a canonical Solidity contract, its checked-in canonical
 VSL, and one or more incompatible contracts that use the same storage root.
 Foundry builds every runtime bytecode before the runner compares each variant
@@ -96,6 +96,7 @@ against the canonical VSL.
 | `4-mapping-struct` | Reordered packed members inside a mapping value | Mapping-value child slots and packed fields validate; reordered members collide. |
 | `5-array-struct` | Packed and multi-slot array structs, reordered members, and adjacent arrays | Canonical child paths validate; reordered fields and an incompatible element stride collide. |
 | `6-array-mapping-struct` | Mapping to an array of packed structs, including a nested dynamic array variant | Recursive mapping-to-array-to-struct paths validate; incompatible nested containers and extra fields collide. |
+| `7-full-storage` | Full representative VSL: packed primitives, inline structs, mappings, arrays, fixed arrays, and struct containers | Canonical writes validate across 24 recovered variables; compatible prefix evidence remains safe and incompatible container/type changes collide. |
 
 An inferred fallback `uint256` cannot prove a collision. The raw tracer marks
 whether the write value type was actually recovered; fallback values are
@@ -104,7 +105,7 @@ as container metadata rather than as element writes.
 
 ### Current Result Snapshot
 
-The current assertion-backed run covers 17 contracts across the six fixture
+The current assertion-backed run covers 20 contracts across the seven fixture
 families:
 
 | Fixture | Variant | Collisions | Validated | Scoped uncertainty |
@@ -126,6 +127,9 @@ families:
 | `6-array-mapping-struct` | canonical mapping-array-struct | 0 | 4 | 0 |
 | `6-array-mapping-struct` | incompatible mapping array struct | 1 | 1 | 1 |
 | `6-array-mapping-struct` | incompatible mapping array and fields | 3 | 1 | 1 |
+| `7-full-storage` | canonical full storage | 0 | 24 | 0 |
+| `7-full-storage` | compatible prefix storage | 0 | 1 | 0 |
+| `7-full-storage` | incompatible full storage | 7 | 3 | 1 |
 
 All variants currently complete without an unresolved-root diagnostic. The
 engine reliably tracks root slots, static slot shifts, selectors, program
@@ -151,7 +155,14 @@ first-field position after the tracer loses its element index, so it cannot
 prove a contradiction by itself. This does not suppress independently recovered
 member writes or their collisions.
 
-## Run the PoC
+The full-storage fixture also retains VSL-only coverage for `bytes`, `string`,
+external and internal function values, fixed struct arrays, nested struct
+containers, and dynamic `bytes`/`string` mapping keys. Its canonical bytecode
+only writes paths that the current tracer can recover without scoped
+uncertainty; unsupported write shapes remain a separate challenge rather than
+being treated as safe evidence.
+
+## Run the Validator
 
 Build all write fixtures with Foundry and run the assertion-backed comparison:
 
@@ -176,7 +187,8 @@ copied from Compose CLI and preserves a readable `virtualPath`; its `id` is
 canonicalized with `cast keccak` so it can match physical EVM storage roots.
 
 It requires Foundry (`forge`, `cast`) and `tsx` from a Compose CLI checkout.
-From this repository in the current research workspace:
+From this repository, with a Compose CLI checkout available at the sibling
+path used below:
 
 ```sh
 node ../../../Compose/cli/node_modules/tsx/dist/cli.mjs tools/generate-vsl.mts \
@@ -196,7 +208,7 @@ engine and the Compose validation boundary. The main extension points are:
 - `src/compose/`: historical unbiased and VSL-bias comparison experiments;
 - `tools/`: VSL generation from Solidity AST;
 - `tests/fixtures/evmole/`: canonical VSL and incompatible bytecode challenge
-  sources for each research case.
+  sources for each validation case.
 
 ## Provenance
 

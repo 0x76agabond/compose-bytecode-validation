@@ -28,11 +28,6 @@ contract CompatibleStorageFacet {
         _storage().owner = value;
     }
 
-    function exportSelectors() external pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](1);
-        selectors[0] = this.writeCompatibleOwner.selector;
-    }
-
     function _storage() private pure returns (Storage storage s) {
         bytes32 position = STORAGE_POSITION;
         assembly {
