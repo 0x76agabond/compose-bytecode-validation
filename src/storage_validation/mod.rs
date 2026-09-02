@@ -32,6 +32,7 @@ struct VslVariableMatch {
     expected_type: Option<String>,
     expected_width: Option<u16>,
     expected_field_start: Option<u8>,
+    is_dynamic_array_header: bool,
     mapping_layers: usize,
     dynamic_array_layers: usize,
     array_strides: Vec<(usize, usize)>,
@@ -61,10 +62,7 @@ enum VslCursorState {
 }
 
 impl ContainerMatch {
-    /// Transitional summary for the existing one-child VSL matcher.
-    ///
-    /// `StorageEvidence::storage_path` retains every segment; this only keeps
-    /// the old matching behavior until the VSL walk itself becomes recursive.
+    /// Summary used by the flat matcher when a recursive VSL path is unavailable.
     fn from_path(path: &[StoragePathSegment]) -> Self {
         let dynamic_array = path.iter().rev().find_map(|segment| match segment {
             StoragePathSegment::DynamicArray { index, stride } if index.is_some() => Some(*stride),
@@ -285,7 +283,7 @@ fn validate_write(
         return;
     }
 
-    if is_dynamic_array_length_write(evidence, &expected_type) {
+    if matched.is_dynamic_array_header || is_plain_dynamic_array_header(evidence, &expected_type) {
         report.validated_variables.push(ValidatedVariable {
             location,
             virtual_path: matched.virtual_path,
@@ -399,10 +397,10 @@ fn validate_write(
     }
 }
 
-fn is_dynamic_array_length_write(evidence: &StorageEvidence, expected_type: &str) -> bool {
-    evidence.offset == 0
+fn is_plain_dynamic_array_header(evidence: &StorageEvidence, expected_type: &str) -> bool {
+    evidence.storage_path.is_empty()
+        && evidence.offset == 0
         && evidence.inferred_type == "uint256"
-        && evidence.symbolic_path.starts_with("Plain(")
         && expected_type.trim().ends_with("[]")
 }
 
@@ -419,12 +417,9 @@ fn match_recursive_vsl_variable(
     evidence: &StorageEvidence,
     layout: &VirtualStorageLayout,
 ) -> VslPathMatch {
-    if !evidence.storage_path.iter().any(|segment| {
-        matches!(
-            segment,
-            StoragePathSegment::Mapping { .. } | StoragePathSegment::DynamicArray { .. }
-        )
-    }) {
+    // Plain slot writes need the flat matcher so its physical packing table can
+    // select the field at the recovered byte offset.
+    if evidence.storage_path.is_empty() {
         return VslPathMatch::NotFound;
     }
 
@@ -464,7 +459,7 @@ fn match_recursive_vsl_root(
     let mut containers = ContainerMatch::default();
     let mut array_strides = Vec::new();
     let mut saw_container = false;
-    let mut resolved_virtual_child = false;
+    let mut resolved_struct_child = false;
     let mut cursor_state = VslCursorState::Field;
 
     // Transition table: container segments unwrap the current field schema;
@@ -496,7 +491,7 @@ fn match_recursive_vsl_root(
                         return VslPathMatch::NotFound;
                     };
                     current = next;
-                    resolved_virtual_child = true;
+                    resolved_struct_child = true;
                     cursor_state = VslCursorState::Field;
                 } else if !saw_container {
                     let Some(next_slot_index) = slot_index.checked_add(*slots) else {
@@ -521,7 +516,7 @@ fn match_recursive_vsl_root(
                     ) {
                         return VslPathMatch::NotFound;
                     }
-                    resolved_virtual_child = true;
+                    resolved_struct_child = true;
                 }
                 let Some(value) = current.mapping_value() else {
                     return container_path_contradiction(
@@ -544,7 +539,7 @@ fn match_recursive_vsl_root(
                     ) {
                         return VslPathMatch::NotFound;
                     }
-                    resolved_virtual_child = true;
+                    resolved_struct_child = true;
                     cursor_state = VslCursorState::StructRoot;
                 }
             }
@@ -558,7 +553,7 @@ fn match_recursive_vsl_root(
                     ) {
                         return VslPathMatch::NotFound;
                     }
-                    resolved_virtual_child = true;
+                    resolved_struct_child = true;
                 }
                 let Some(element) = current.dynamic_array_element() else {
                     return container_path_contradiction(
@@ -586,7 +581,7 @@ fn match_recursive_vsl_root(
                         return VslPathMatch::NotFound;
                     };
                     current = next;
-                    resolved_virtual_child = true;
+                    resolved_struct_child = true;
                     cursor_state = VslCursorState::StructRoot;
                 }
             }
@@ -598,20 +593,29 @@ fn match_recursive_vsl_root(
     {
         return VslPathMatch::NotFound;
     }
-    if !resolved_virtual_child {
-        return VslPathMatch::NotFound;
-    }
+    let matched = if resolved_struct_child {
+        vsl_variable_match(
+            record,
+            layout,
+            slot_index,
+            evidence.offset,
+            containers,
+            array_strides,
+        )
+    } else {
+        terminal_vsl_variable_match(
+            record,
+            slot_index,
+            &current,
+            evidence.offset,
+            containers,
+            array_strides,
+        )
+    };
 
-    vsl_variable_match(
-        record,
-        layout,
-        slot_index,
-        evidence.offset,
-        containers,
-        array_strides,
-    )
-    .map(VslPathMatch::Matched)
-    .unwrap_or(VslPathMatch::NotFound)
+    matched
+        .map(VslPathMatch::Matched)
+        .unwrap_or(VslPathMatch::NotFound)
 }
 
 fn resolve_virtual_cursor<'a>(
@@ -725,6 +729,33 @@ fn vsl_variable_match(
         ),
         expected_width: expected_width_at(record, slot_index, offset),
         expected_field_start,
+        is_dynamic_array_header: false,
+        mapping_layers: container.mapping_layers,
+        dynamic_array_layers: container.dynamic_array_layers,
+        array_strides,
+    })
+}
+
+/// Builds a match from the VSL cursor after a recursive path walk. Unlike the
+/// flat matcher, `current` is already the schema selected by mapping/array
+/// segments, so a mapping value scalar must not be compared with its mapping
+/// declaration and a terminal dynamic array denotes its header slot.
+fn terminal_vsl_variable_match(
+    record: &VirtualStorageLayoutRecord,
+    slot_index: usize,
+    current: &vsl::VslType,
+    offset: u8,
+    container: ContainerMatch,
+    array_strides: Vec<(usize, usize)>,
+) -> Option<VslVariableMatch> {
+    record.slots.get(slot_index)?;
+    let expected_field_start = expected_field_start_at(record, slot_index, offset);
+    Some(VslVariableMatch {
+        virtual_path: format!("{}.slot[{slot_index}].byte[{offset}]", record.virtual_path),
+        expected_type: Some(current.display()),
+        expected_width: current.scalar_width(),
+        expected_field_start,
+        is_dynamic_array_header: matches!(current, vsl::VslType::DynamicArray(_)),
         mapping_layers: container.mapping_layers,
         dynamic_array_layers: container.dynamic_array_layers,
         array_strides,

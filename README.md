@@ -109,11 +109,11 @@ families:
 
 | Fixture | Variant | Collisions | Validated | Scoped uncertainty |
 | --- | --- | ---: | ---: | ---: |
-| `1-normal` | canonical | 0 | 9 | 2 |
+| `1-normal` | canonical | 0 | 11 | 0 |
 | `1-normal` | incompatible packed width | 2 | 3 | 0 |
-| `2-constant-key` | canonical | 0 | 2 | 2 |
-| `2-constant-key` | incompatible dynamic width | 1 | 1 | 2 |
-| `3-storage-key` | canonical | 0 | 7 | 1 |
+| `2-constant-key` | canonical | 0 | 4 | 0 |
+| `2-constant-key` | incompatible dynamic width | 1 | 3 | 0 |
+| `3-storage-key` | canonical | 0 | 8 | 0 |
 | `3-storage-key` | incompatible dynamic width | 2 | 0 | 0 |
 | `3-storage-key` | incompatible fixed width | 2 | 0 | 0 |
 | `4-mapping-struct` | canonical | 0 | 5 | 0 |
@@ -123,9 +123,9 @@ families:
 | `5-array-struct` | incompatible wide reordered members | 2 | 1 | 0 |
 | `5-array-struct` | incompatible address array | 0 | 1 | 0 |
 | `5-array-struct` | adjacent arrays | 1 | 1 | 0 |
-| `6-array-mapping-struct` | canonical mapping-array-struct | 0 | 3 | 1 |
-| `6-array-mapping-struct` | incompatible mapping array struct | 1 | 0 | 2 |
-| `6-array-mapping-struct` | incompatible mapping array and fields | 3 | 0 | 2 |
+| `6-array-mapping-struct` | canonical mapping-array-struct | 0 | 4 | 0 |
+| `6-array-mapping-struct` | incompatible mapping array struct | 1 | 1 | 1 |
+| `6-array-mapping-struct` | incompatible mapping array and fields | 3 | 1 | 1 |
 
 All variants currently complete without an unresolved-root diagnostic. The
 engine reliably tracks root slots, static slot shifts, selectors, program
@@ -144,9 +144,11 @@ rules. This validates packed and multi-slot array-struct members, detects
 element-stride contradictions, and detects nested dynamic containers or fields
 that exceed the canonical child struct span.
 
-Some writes remain deliberately scoped uncertainty when the tracer knows the
-concrete storage position but cannot recover a value type, such as an internal
-dynamic-array length update. This does not suppress independently recovered
+Some writes remain deliberately scoped uncertainty when the tracer knows a
+concrete storage position but loses the nested child path or value type. In the
+case 6 incompatible variants, an inner array-length update shares the canonical
+first-field position after the tracer loses its element index, so it cannot
+prove a contradiction by itself. This does not suppress independently recovered
 member writes or their collisions.
 
 ## Run the PoC

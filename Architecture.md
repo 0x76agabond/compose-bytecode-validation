@@ -222,6 +222,20 @@ The VSL is a source-side input generated from Solidity's compact AST; it
 contains root identities, physical packing/slot rules, container semantics, and
 virtual child records for structs inside containers.
 
+The public validation entry point is:
+
+```rust
+storage_validation::validate(&StorageValidationInput {
+    bytecode,
+    virtual_storage_layout,
+}) -> StorageValidationReport
+```
+
+`bytecode` is one facet's deployed runtime bytecode. `virtual_storage_layout`
+is the complete canonical layout that Compose produced for the selected
+diamond. The input deliberately has no fixture name, contract name, or
+case-specific validation mode; those exist only in the research runner.
+
 The validation layer uses VSL twice, for distinct purposes:
 
 1. `storage_trace_hints()` supplies known persistent scalar and mapping-key
@@ -244,6 +258,22 @@ offset, bit width, scalar/container semantics, dynamic-array element stride,
 and nested container/virtual-struct paths. The six fixture families exercise
 the same recursive path matcher for mapping structs, array structs, and
 mapping-to-array-to-struct layouts.
+
+The matcher has generic transition rules rather than fixture rules:
+
+1. A plain storage path uses VSL's physical slot and packed-byte table to select
+   the field at the recovered slot and offset.
+2. A path containing mapping, dynamic-array, or slot-offset segments walks the
+   matching VSL container schema in order.
+3. A path that terminates at a dynamic-array schema validates an array-header
+   write; a path that continues through the array is matched against its
+   element schema and, when available, its recovered stride.
+4. Entering a virtual struct moves to its child record, whose physical slot and
+   packing table select the final field.
+
+Fixtures supply different bytecode and canonical VSL inputs to challenge these
+same transitions. They do not register handling code for individual Solidity
+patterns.
 
 `src/compose/` contains earlier unbiased and VSL-bias experiments. They are
 research comparisons, not part of the active validation verdict.

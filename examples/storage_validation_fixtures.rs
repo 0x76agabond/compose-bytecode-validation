@@ -21,6 +21,7 @@ struct Case {
     name: &'static str,
     directory: &'static str,
     minimum_canonical_validated: usize,
+    maximum_canonical_uncertain: usize,
     variants: &'static [Variant],
 }
 
@@ -28,7 +29,8 @@ const CASES: &[Case] = &[
     Case {
         name: "1-normal",
         directory: "1-normal",
-        minimum_canonical_validated: 0,
+        minimum_canonical_validated: 11,
+        maximum_canonical_uncertain: 0,
         variants: &[
             Variant {
                 name: "canonical",
@@ -47,7 +49,8 @@ const CASES: &[Case] = &[
     Case {
         name: "2-constant-key",
         directory: "2-constant-key",
-        minimum_canonical_validated: 0,
+        minimum_canonical_validated: 4,
+        maximum_canonical_uncertain: 0,
         variants: &[
             Variant {
                 name: "canonical",
@@ -66,7 +69,8 @@ const CASES: &[Case] = &[
     Case {
         name: "3-storage-key",
         directory: "3-storage-key",
-        minimum_canonical_validated: 0,
+        minimum_canonical_validated: 8,
+        maximum_canonical_uncertain: 0,
         variants: &[
             Variant {
                 name: "canonical",
@@ -92,6 +96,7 @@ const CASES: &[Case] = &[
         name: "4-mapping-struct",
         directory: "4-mapping-struct",
         minimum_canonical_validated: 5,
+        maximum_canonical_uncertain: 0,
         variants: &[
             Variant {
                 name: "canonical",
@@ -111,6 +116,7 @@ const CASES: &[Case] = &[
         name: "5-array-struct",
         directory: "5-array-struct",
         minimum_canonical_validated: 9,
+        maximum_canonical_uncertain: 0,
         variants: &[
             Variant {
                 name: "canonical",
@@ -147,7 +153,8 @@ const CASES: &[Case] = &[
     Case {
         name: "6-array-mapping-struct",
         directory: "6-array-mapping-struct",
-        minimum_canonical_validated: 3,
+        minimum_canonical_validated: 4,
+        maximum_canonical_uncertain: 0,
         variants: &[
             Variant {
                 name: "canonical-mapping-array-struct",
@@ -235,6 +242,11 @@ fn main() {
                     assert!(
                         report.validated_variables.len() >= case.minimum_canonical_validated,
                         "{} canonical bytecode recovered too few VSL variables",
+                        case.name
+                    );
+                    assert!(
+                        report.uncertain_scopes.len() <= case.maximum_canonical_uncertain,
+                        "{} canonical bytecode has unexpected scoped uncertainty",
                         case.name
                     );
                 }

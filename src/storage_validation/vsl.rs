@@ -155,6 +155,13 @@ impl VslType {
     pub(crate) fn is_virtual_struct(&self) -> bool {
         matches!(self, Self::VirtualStruct)
     }
+
+    pub(crate) fn scalar_width(&self) -> Option<u16> {
+        let Self::Scalar { width, .. } = self else {
+            return None;
+        };
+        *width
+    }
 }
 
 #[derive(Clone, Debug)]
