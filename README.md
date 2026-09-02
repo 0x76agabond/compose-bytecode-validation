@@ -10,6 +10,28 @@ boundaries, and named storage roots. This project asks a narrower question:
 
 > Does bytecode storage evidence clearly contradict the selected facet's VSL?
 
+## Virtual Storage Layout
+
+The VSL is the canonical source-side model of the full diamond's declared
+storage. It is generated from Solidity's compact AST before this validator sees
+any bytecode. A record has a namespace-derived root identity and a compact
+layout encoding, while its readable virtual path describes the variable or
+virtual struct child that occupies each position.
+
+It preserves the Solidity rules that matter for bytecode validation:
+
+- declaration order, slot boundaries, byte packing, and fixed-array physical
+  span;
+- semantic boundaries for structs, mappings, and dynamic arrays, including
+  virtual child records for structs inside containers; and
+- declared scalar type and width at every comparable slot and byte offset.
+
+That gives the validator a complete expected storage map for the diamond rather
+than asking a decompiler to rediscover one from every facet in isolation. VSL
+does not prove that bytecode reaches every path or interpret arbitrary assembly;
+it supplies the expected coordinate system and the type/packing constraints
+against which recovered persistent writes are challenged.
+
 ## Inputs and Verdicts
 
 Each validation run consumes:
@@ -18,7 +40,9 @@ Each validation run consumes:
 - VSL records generated from the Solidity compact AST; and
 - concrete root slots derived from the VSL namespaces.
 
-The active write validator reports four evidence collections:
+The validator traces persistent `SSTORE` operations and compares concrete
+storage evidence with the canonical full-diamond VSL. It reports four evidence
+collections:
 
 | Evidence | Meaning |
 | --- | --- |
@@ -29,22 +53,6 @@ The active write validator reports four evidence collections:
 
 No collision is not a complete proof of safety. Unreached paths and unsupported
 compiler patterns remain outside the evidence set.
-
-## Current Validation Path
-
-`src/storage_validation/` is the active PoC path. It consumes only persistent
-`SSTORE` evidence and compares each recovered variable with the canonical
-full-diamond VSL:
-
-```text
-facet runtime bytecode + canonical VSL
-  -> recovered persistent writes
-  -> collisions[] | validatedVariables[] | uncertainScopes[] | diagnostics[]
-```
-
-An `uncertainScope` always has a concrete recovered storage slot, selector,
-program counter, and reason. A write with no recoverable root is a diagnostic,
-not an unspecified global warning.
 
 ## What Differs From Original EVMole
 
@@ -68,24 +76,9 @@ storage tracer as the analysis substrate, then adds a Compose-specific layer:
 
 The scope is deliberately narrower than a complete decompiler: the validator
 tries to prove a bytecode/VSL contradiction, not reconstruct every storage
-variable that a facet could access.
-
-## Historical Inference Experiments
-
-`src/compose/` runs both paths over the same raw storage trace:
-
-- `compose`: leaves EVMole's bytecode inference independent, then compares it
-  with VSL physical and semantic layout.
-- `compose-vsl-bias`: tests whether a matching VSL can explain an ambiguous
-  inference, such as a mapping value struct collapsed to `address`.
-
-Every VSL bias is emitted as an assumption. A report containing an assumption
-is always `uncertain`; VSL must never turn ambiguous bytecode into a safe
-verdict.
-
-Mapping key-type differences are diagnostic only. The comparison treats value
-shape, container shape, byte width, packing offset, and root slot identity as
-storage compatibility evidence.
+variable that a facet could access. Mapping key-type differences are diagnostic
+only; value shape, container shape, byte width, packing offset, and root slot
+identity are storage compatibility evidence.
 
 ## Fixture Coverage
 
@@ -101,8 +94,8 @@ against the canonical VSL.
 | `2-constant-key` | Constant mapping keys and packed dynamic-array width | VSL anchors constant keys; canonical array writes validate and width mismatch collides. |
 | `3-storage-key` | Storage-derived mapping keys and dynamic/fixed indexes | VSL anchors the loaded `uint64` key; dynamic and fixed packed element mismatches collide. |
 | `4-mapping-struct` | Reordered packed members inside a mapping value | Mapping-value child slots and packed fields validate; reordered members collide. |
-| `5-array-struct` | Reordered struct arrays and scalar-array replacement | Root is known; array child path reconstruction remains scoped uncertainty. |
-| `6-array-mapping-struct` | Mapping-to-address versus mapping-to-array-struct | Mapping value roots are recovered; missing child paths remain scoped uncertainty. |
+| `5-array-struct` | Packed and multi-slot array structs, reordered members, and adjacent arrays | Canonical child paths validate; reordered fields and an incompatible element stride collide. |
+| `6-array-mapping-struct` | Mapping to an array of packed structs, including a nested dynamic array variant | Recursive mapping-to-array-to-struct paths validate; incompatible nested containers and extra fields collide. |
 
 An inferred fallback `uint256` cannot prove a collision. The raw tracer marks
 whether the write value type was actually recovered; fallback values are
@@ -111,7 +104,7 @@ as container metadata rather than as element writes.
 
 ### Current Result Snapshot
 
-The current assertion-backed run covers 15 contracts across the six fixture
+The current assertion-backed run covers 17 contracts across the six fixture
 families:
 
 | Fixture | Variant | Collisions | Validated | Scoped uncertainty |
@@ -125,12 +118,14 @@ families:
 | `3-storage-key` | incompatible fixed width | 2 | 0 | 0 |
 | `4-mapping-struct` | canonical | 0 | 5 | 0 |
 | `4-mapping-struct` | incompatible reordered members | 2 | 3 | 0 |
-| `5-array-struct` | canonical | 0 | 0 | 3 |
-| `5-array-struct` | incompatible reordered members | 0 | 0 | 3 |
-| `5-array-struct` | incompatible scalar array | 0 | 0 | 1 |
-| `6-array-mapping-struct` | canonical | 0 | 0 | 1 |
-| `6-array-mapping-struct` | incompatible array-only value | 0 | 0 | 2 |
-| `6-array-mapping-struct` | incompatible array-and-fields value | 0 | 0 | 4 |
+| `5-array-struct` | canonical | 0 | 9 | 0 |
+| `5-array-struct` | incompatible reordered members | 2 | 1 | 0 |
+| `5-array-struct` | incompatible wide reordered members | 2 | 1 | 0 |
+| `5-array-struct` | incompatible address array | 0 | 1 | 0 |
+| `5-array-struct` | adjacent arrays | 1 | 1 | 0 |
+| `6-array-mapping-struct` | canonical mapping-array-struct | 0 | 3 | 1 |
+| `6-array-mapping-struct` | incompatible mapping array struct | 1 | 0 | 2 |
+| `6-array-mapping-struct` | incompatible mapping array and fields | 3 | 0 | 2 |
 
 All variants currently complete without an unresolved-root diagnostic. The
 engine reliably tracks root slots, static slot shifts, selectors, program
@@ -140,13 +135,19 @@ VSL-derived trace hints now recover mapping key types for constant and
 storage-loaded keys. Packed read-modify-write values retain their ABI type
 through dynamic index shifting, including Solidity's boolean normalization.
 
-Mapping-value structs now retain constant child-slot deltas from `KECCAK256 +
-constant` and packed write masks. Case 4 therefore validates the canonical
-mapping value and proves the reordered member contradiction. The next target is
-array child-path reconstruction: case 5 still has a concrete root but not the
-member index/stride information required to challenge its VSL child. Other
-mapping values without a virtual child, including case 6, remain explicitly
-scoped uncertainty rather than false collisions.
+Mapping-value structs retain constant child-slot deltas from `KECCAK256 +
+constant` and packed write masks. The storage tracer also preserves ordered
+path segments for mappings, dynamic arrays, and slot offsets. The validator
+walks those segments recursively through VSL virtual struct children, so cases
+4, 5, and 6 use the same path-matching mechanism rather than case-specific
+rules. This validates packed and multi-slot array-struct members, detects
+element-stride contradictions, and detects nested dynamic containers or fields
+that exceed the canonical child struct span.
+
+Some writes remain deliberately scoped uncertainty when the tracer knows the
+concrete storage position but cannot recover a value type, such as an internal
+dynamic-array length update. This does not suppress independently recovered
+member writes or their collisions.
 
 ## Run the PoC
 

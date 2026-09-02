@@ -1,16 +1,16 @@
-# EVMole Architecture
+# Compose Bytecode Validation Architecture
 
-This document describes the current EVMole Rust implementation at fork baseline
-`53a7f6b`. It accepts deployed/runtime EVM bytecode. Creation bytecode is not
+This document describes the current Rust architecture of the Compose bytecode
+validation fork. It retains EVMole's symbolic execution engine as its analysis
+substrate and adds a Compose-specific persistent-write validator.
+
+The engine accepts deployed/runtime EVM bytecode. Creation bytecode is not
 executed or stripped automatically.
-
-The final section marks the proposed boundary for Compose bytecode validation.
-Everything before that section describes current EVMole behavior.
 
 ## Purpose
 
-EVMole uses lightweight symbolic execution to recover facts from runtime
-bytecode without source or an ABI:
+The inherited EVMole engine uses lightweight symbolic execution to recover
+facts from runtime bytecode without source or an ABI:
 
 - external function selectors and dispatcher targets;
 - inferred ABI argument types;
@@ -42,6 +42,7 @@ flowchart TD
 
     bytecode --> storage["Storage analysis<br/>src/storage"]
     enriched --> storage
+    storage --> evidence["Raw StorageEvidence[]"]
     storage --> persistent["Persistent StorageRecord[]"]
     storage --> transient["Transient StorageRecord[]"]
 
@@ -177,6 +178,12 @@ one best inferred type. It can discard evidence important to Compose, notably
 the exact packed width and consumer pattern of a mapping value that is a struct
 member.
 
+The fork retains a parallel `StorageEvidence` stream before that collapse. Each
+write evidence item includes the persistent/transient domain, selector, PC,
+concrete root when recoverable, packed byte offset and width, recovered value
+type, and an ordered symbolic path. The path can retain mapping layers,
+dynamic-array elements with recovered stride, and constant slot offsets.
+
 ## Control-Flow Graph
 
 CFG construction is optional and independent from the storage executor:
@@ -207,65 +214,69 @@ For Compose, the natural integration target is the JavaScript/WASM boundary.
 The CLI should pass structured validation input to a Compose-specific Rust API;
 it should not spawn `cargo` or parse human-readable CLI output.
 
-## Compose Validation Extension Boundary
+## Compose Validation Layer
 
-The active validation host lives in `src/storage_validation/`. It consumes the
-canonical full-diamond VSL and persistent write evidence from one facet's
-runtime bytecode. It reports four independent evidence collections:
+`src/storage_validation/` is the active Compose host. It accepts one facet's
+runtime bytecode plus the canonical full-diamond Virtual Storage Layout (VSL).
+The VSL is a source-side input generated from Solidity's compact AST; it
+contains root identities, physical packing/slot rules, container semantics, and
+virtual child records for structs inside containers.
+
+The validation layer uses VSL twice, for distinct purposes:
+
+1. `storage_trace_hints()` supplies known persistent scalar and mapping-key
+   types to the generic tracer. Hints only improve symbolic recovery; they do
+   not make a compatibility decision.
+2. The recursive matcher compares recovered persistent writes with the VSL.
+   It follows the ordered storage path through mappings, dynamic arrays,
+   offsets, and virtual struct children.
+
+It reports four independent evidence collections:
 
 - `collisions` for proven contradictions;
 - `validatedVariables` for recovered writes compatible with VSL;
 - `uncertainScopes` for unresolved writes at a concrete storage location;
 - `diagnostics` when even the storage root cannot be recovered.
 
-The earlier experiments remain in `src/compose/` for comparison:
+The active validator consumes `StorageEvidence` after symbolic tracing but
+before EVMole's final slot-record collapse. It validates root slot, packed
+offset, bit width, scalar/container semantics, dynamic-array element stride,
+and nested container/virtual-struct paths. The six fixture families exercise
+the same recursive path matcher for mapping structs, array structs, and
+mapping-to-array-to-struct layouts.
 
-- `compose` keeps bytecode inference independent and applies VSL afterward.
-- `compose_vsl_bias` allows VSL physical slot constraints to resolve selected
-  ambiguous inference, while recording every such resolution as an assumption.
-
-The active validator consumes storage evidence after symbolic tracing but
-before EVMole's final slot-record collapse. It covers root slot, packed offset,
-bit width, and scalar/container VSL token semantics. Container child member
-paths are currently scoped uncertainty until mapping and array child path
-reconstruction is connected to VSL child records. No collision is not a
-complete compatibility proof because unreachable paths remain outside the
-evidence set.
-
-The fork should preserve EVMole's existing `StorageRecord` output for upstream
-compatibility and add a parallel raw evidence stream before storage
-finalization.
+`src/compose/` contains earlier unbiased and VSL-bias experiments. They are
+research comparisons, not part of the active validation verdict.
 
 ```mermaid
 flowchart LR
-    ast["Compose Solidity AST"] --> vsl["Virtual Storage Layout<br/>semantic types and boundaries"]
-    ast --> anchors["Function anchors<br/>selector + parameter types"]
-    vsl --> slotmap["Concrete Slot Map<br/>namespace roots and paths"]
+    ast["Compose Solidity AST"] --> vsl["Canonical full-diamond VSL<br/>roots, packing, types, child layouts"]
 
     bytecode["Facet runtime bytecode"] --> engine["Forked EVMole storage executor"]
-    anchors --> engine
-    engine --> evidence["StorageEvidence<br/>operation, symbolic path, slot delta,<br/>bit range, type signal, confidence"]
+    vsl --> hints["Trace hints<br/>persistent scalar and mapping-key types"]
+    hints --> engine
+    engine --> evidence["StorageEvidence<br/>operation, ordered symbolic path,<br/>slot delta, bit range, type signal"]
 
     evidence --> matcher["Compose persistent-write validator"]
-    slotmap --> matcher
     vsl --> matcher
     matcher --> verdict["collisions | validated | scoped uncertainty | diagnostics"]
 ```
 
-The primary seam is `src/storage/mod.rs`, immediately after a storage access
-has a symbolic slot expression and before `finalize_slot_records()` groups and
-flattens it. `StorageEvidence` retains:
+The primary seam is `src/storage/mod.rs`, after a storage access has a symbolic
+slot expression and before `finalize_slot_records()` groups and flattens it.
+`StorageEvidence` retains:
 
 - read/write operation and persistent/transient domain;
 - selector and program counter;
-- symbolic root, mapping, dynamic-array, and constant-slot path;
+- symbolic root and ordered mapping, dynamic-array, and constant-slot path;
 - slot delta from a known root where recoverable;
 - packed bit offset and selected width;
 - observed type signal and whether the value type was actually recovered.
 
-`src/arguments/mod.rs` remains valuable as a source of reusable type-recognition
-patterns and optional known function anchors. It is not the correct layer to
-compare Virtual Storage Layout entries.
+`src/arguments/mod.rs` remains valuable for recovering calldata type anchors.
+`src/storage_validation/vsl.rs` owns VSL decoding, trace hints, and semantic
+comparison. `src/storage_validation/mod.rs` owns the recursive VSL path walk
+and validation policy.
 
 The Compose matcher belongs above the generic engine and owns policy:
 
@@ -286,10 +297,10 @@ collision verdict. Unknown or flattened evidence must never prove `safe`.
   parallel.
 - Do not turn unknown symbolic values into a concrete slot/type merely to
   produce a verdict.
-- Keep selector/parameter anchors explicit in the validation API. EVMole may
-  infer them when absent, but Compose source data is stronger evidence.
-- Keep Virtual Storage Layout and Slot Map outside the generic engine. The
-  engine recovers bytecode facts; Compose decides compatibility policy.
+- Keep VSL-derived recovery hints separate from compatibility policy: hints may
+  improve tracing but cannot turn ambiguous evidence into a validated result.
+- Keep VSL decoding and compatibility policy in the Compose host layer. The
+  generic engine recovers bytecode facts; Compose decides the verdict.
 
 ## Source Map
 
@@ -303,6 +314,7 @@ collision verdict. Unknown or flattened evidence must never prove `safe`.
 | Selector recovery | `src/selectors/mod.rs` |
 | ABI type recovery | `src/arguments/mod.rs` |
 | Storage tracing and finalization | `src/storage/mod.rs` |
+| VSL decoding and write validation | `src/storage_validation/` |
 | CFG | `src/control_flow_graph/` |
 | JavaScript binding | `src/interface_js.rs`, `javascript/` |
 | WASM C ABI | `src/interface_wasm.rs` |
