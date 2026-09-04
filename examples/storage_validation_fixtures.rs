@@ -236,7 +236,7 @@ const CASES: &[Case] = &[
                 expectation: Expectation::KnownLimitation,
             },
             Variant {
-                name: "bytes-string-semantic-variant",
+                name: "swapped-bytes-string-types",
                 source: "Incompatible.sol",
                 contract: "Case8BytesStringVariant",
                 expectation: Expectation::KnownLimitation,

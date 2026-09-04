@@ -18,6 +18,50 @@ any bytecode. A record has a namespace-derived root identity and a compact
 layout encoding, while its readable virtual path describes the variable or
 virtual struct child that occupies each position.
 
+The layout is a small recursive token stream:
+
+- `0x01..0x73`: one byte per scalar type, for example `0x01` is `bool` and
+  `0x03` is `address`;
+- `0xf1`: mapping;
+- `0xf2`: dynamic array;
+- `0xf3`: fixed array;
+- `0xf4`: struct; and
+- `0xff`: end of the current container.
+
+For example, this Solidity shape:
+
+```solidity
+struct Node {
+    address target;
+    bytes4 previousId;
+    bytes8 nextId;
+}
+
+struct Storage {
+    mapping(bytes4 => Node[]) nodes;
+}
+```
+
+uses two records. The root record is:
+
+```text
+0xf1 0x53 0xf2 0xff
+mapping bytes4 dynamic-array virtual-child
+```
+
+The child record at `nodes.0` holds the `Node` schema:
+
+```text
+0x03 0x53 0x57
+address bytes4 bytes8
+```
+
+Here `0xf2 0xff` means the dynamic-array element is a virtual child rather
+than an inline type. `0xf2` is already the mapping value, so that one `0xff`
+finishes the array branch and the mapping is complete too; it does not close an
+unrelated outer struct. The separate child record preserves the struct schema
+and physical span.
+
 It preserves the Solidity rules that matter for bytecode validation:
 
 - declaration order, slot boundaries, byte packing, and fixed-array physical
@@ -97,7 +141,7 @@ against the canonical VSL.
 | `5-array-struct` | Packed and multi-slot array structs, reordered members, and adjacent arrays | Canonical child paths validate; reordered fields and an incompatible element stride collide. |
 | `6-array-mapping-struct` | Indexed mapping to an array of packed structs | Canonical indexed writes validate; reordered members collide without uncertainty. |
 | `7-array-mapping-struct-push` | Mapping to an array of packed structs created with `push()`, including a nested dynamic array variant | Recursive paths validate; incompatible nested containers and extra fields collide, with scoped uncertainty where `push()` loses a child boundary. |
-| `final-full-storage` | Full representative VSL: packed primitives, inline structs, mappings, arrays, fixed arrays, struct containers, and independent ERC-8110-style domains | Canonical writes validate across 30 recovered variables; terminal member compatibility validates, while an incompatible terminal type collides. |
+| `final-full-storage` | Full representative VSL: packed primitives, inline structs, mappings, arrays, fixed arrays, struct containers, and independent ERC-8110-style domains | Canonical writes validate across 30 recovered variables; incompatible terminal, nested, and dynamic-key writes collide. |
 | `8-bytes-string` | `bytes`, `string`, `bytes[]`, and `string[]` assignment and append flows | Known tracer limitation: canonical array appends currently produce false collisions and scoped uncertainty. |
 
 An inferred fallback `uint256` cannot prove a collision. The raw tracer marks
@@ -135,7 +179,7 @@ families:
 | `final-full-storage` | compatible prefix storage | 0 | 1 | 0 |
 | `final-full-storage` | incompatible full storage | 12 | 4 | 1 |
 | `8-bytes-string` | canonical bytes and string | 31 | 2 | 4 |
-| `8-bytes-string` | bytes/string semantic variant | 31 | 2 | 4 |
+| `8-bytes-string` | swapped bytes/string types | 31 | 2 | 4 |
 
 All variants currently complete without an unresolved-root diagnostic. The
 engine reliably tracks root slots, static slot shifts, selectors, program
