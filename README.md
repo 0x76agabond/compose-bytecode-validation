@@ -142,7 +142,7 @@ against the canonical VSL.
 | `6-array-mapping-struct` | Indexed mapping to an array of packed structs | Canonical indexed writes validate; reordered members collide without uncertainty. |
 | `7-array-mapping-struct-push` | Mapping to an array of packed structs created with `push()`, including a nested dynamic array variant | Recursive paths validate; incompatible nested containers and extra fields collide, with scoped uncertainty where `push()` loses a child boundary. |
 | `final-full-storage` | Full representative VSL: packed primitives, inline structs, mappings, arrays, fixed arrays, struct containers, and independent ERC-8110-style domains | Canonical writes validate across 30 recovered variables; incompatible terminal, nested, and dynamic-key writes collide. |
-| `8-bytes-string` | `bytes`, `string`, `bytes[]`, and `string[]` assignment and append flows | Known tracer limitation: canonical array appends currently produce false collisions and scoped uncertainty. |
+| `8-bytes-string` | `bytes`, `string`, `bytes[]`, and `string[]` assignment and append flows | Solidity encodes `bytes` and `string` identically in storage, so their type swap is not a physical collision. Known tracer limitation: canonical array appends currently produce false collisions and scoped uncertainty. |
 
 An inferred fallback `uint256` cannot prove a collision. The raw tracer marks
 whether the write value type was actually recovered; fallback values are
