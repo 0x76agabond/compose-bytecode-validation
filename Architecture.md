@@ -255,7 +255,7 @@ It reports four independent evidence collections:
 The active validator consumes `StorageEvidence` after symbolic tracing but
 before EVMole's final slot-record collapse. It validates root slot, packed
 offset, bit width, scalar/container semantics, dynamic-array element stride,
-and nested container/virtual-struct paths. The seven fixture families exercise
+and nested container/virtual-struct paths. The eight fixture families exercise
 the same recursive path matcher for mapping structs, array structs, and
 mapping-to-array-to-struct layouts.
 

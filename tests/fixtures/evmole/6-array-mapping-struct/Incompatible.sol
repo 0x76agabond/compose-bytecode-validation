@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-contract Case6Canonical {
+contract Case6Incompatible {
     bytes32 constant STORAGE_POSITION = keccak256("compose.validation.case6.mapping-array-struct");
 
     struct Node {
+        bytes8 nextId;
         address target;
         bytes4 previousId;
-        bytes8 nextId;
     }
 
     struct Storage { mapping(bytes4 => Node[]) nodes; }

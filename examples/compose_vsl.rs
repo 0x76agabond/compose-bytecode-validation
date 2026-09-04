@@ -24,7 +24,7 @@ fn record(
         serialized_layout,
         slots,
         source: VirtualStorageLayoutSource::Erc8042,
-        source_name: "tests/fixtures/evmole/7-full-storage/Canonical.sol".to_owned(),
+        source_name: "tests/fixtures/evmole/final-full-storage/Canonical.sol".to_owned(),
         contract_name: "FullStorageFacet".to_owned(),
         struct_name: Some("Storage".to_owned()),
         diamond_name: None,

@@ -22,6 +22,11 @@ contract FullStorageFacet {
         address owner;
     }
 
+    struct Node {
+        uint256 amount;
+        address owner;
+    }
+
     /**
      * @custom:storage-location erc8042:compose.fixture.virtual-storage
      */
@@ -62,8 +67,46 @@ contract FullStorageFacet {
         function(uint256) internal returns (uint256) internalFn;
     }
 
+    /**
+     * @custom:storage-location erc8042:compose.fixture.terminal.v1
+     */
+    struct TerminalStorage {
+        mapping(uint256 => Node) nodes;
+    }
+
+    /**
+     * @custom:storage-location erc8042:compose.fixture.nested.v1
+     */
+    struct NestedStorage {
+        mapping(uint256 => ContainerChild[]) nestedChildren;
+    }
+
+    /**
+     * @custom:storage-location erc8042:compose.fixture.dynamic-keys.v1
+     */
+    struct DynamicKeyStorage {
+        mapping(bytes => uint256) bytesKeyed;
+        mapping(string => uint256) stringKeyed;
+    }
+
+    /**
+     * @custom:storage-location erc8042:compose.fixture.dynamic-data.v1
+     */
+    struct DynamicDataStorage {
+        bytes dynamicBytes;
+        string text;
+    }
+
     bytes32 private constant STORAGE_POSITION =
         keccak256("compose.fixture.virtual-storage");
+    bytes32 private constant TERMINAL_POSITION =
+        keccak256("compose.fixture.terminal.v1");
+    bytes32 private constant NESTED_POSITION =
+        keccak256("compose.fixture.nested.v1");
+    bytes32 private constant DYNAMIC_KEYS_POSITION =
+        keccak256("compose.fixture.dynamic-keys.v1");
+    bytes32 private constant DYNAMIC_DATA_POSITION =
+        keccak256("compose.fixture.dynamic-data.v1");
 
     function writePacked(
         bool flag,
@@ -115,7 +158,6 @@ contract FullStorageFacet {
         mapped.amount = amount;
         mapped.active = active;
         mapped.owner = owner;
-
     }
 
     function writeFixed(
@@ -129,6 +171,39 @@ contract FullStorageFacet {
         s.nestedFixed[outer % 10][inner % 5] = value;
     }
 
+    function writeTerminalAmount(uint256 key, uint256 amount) external {
+        _terminal().nodes[key].amount = amount;
+    }
+
+    function writeNestedChildren(
+        uint256 key,
+        uint256 index,
+        uint256 amount,
+        bool active
+    ) external {
+        NestedStorage storage s = _nested();
+        s.nestedChildren[key].push();
+        ContainerChild storage child = s.nestedChildren[key][index];
+        child.amount = amount;
+        child.active = active;
+    }
+
+    function writeDynamicKeys(
+        bytes calldata bytesKey,
+        string calldata stringKey,
+        uint256 value
+    ) external {
+        DynamicKeyStorage storage s = _dynamicKeys();
+        s.bytesKeyed[bytesKey] = value;
+        s.stringKeyed[stringKey] = value;
+    }
+
+    function writeDynamicData(bytes calldata data, string calldata value) external {
+        DynamicDataStorage storage s = _dynamicData();
+        s.dynamicBytes = data;
+        s.text = value;
+    }
+
     function exportSelectors() external pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](1);
         selectors[0] = this.writePacked.selector;
@@ -136,6 +211,34 @@ contract FullStorageFacet {
 
     function _storage() private pure returns (Storage storage s) {
         bytes32 position = STORAGE_POSITION;
+        assembly {
+            s.slot := position
+        }
+    }
+
+    function _terminal() private pure returns (TerminalStorage storage s) {
+        bytes32 position = TERMINAL_POSITION;
+        assembly {
+            s.slot := position
+        }
+    }
+
+    function _nested() private pure returns (NestedStorage storage s) {
+        bytes32 position = NESTED_POSITION;
+        assembly {
+            s.slot := position
+        }
+    }
+
+    function _dynamicKeys() private pure returns (DynamicKeyStorage storage s) {
+        bytes32 position = DYNAMIC_KEYS_POSITION;
+        assembly {
+            s.slot := position
+        }
+    }
+
+    function _dynamicData() private pure returns (DynamicDataStorage storage s) {
+        bytes32 position = DYNAMIC_DATA_POSITION;
         assembly {
             s.slot := position
         }

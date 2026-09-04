@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-contract Case6IncompatibleArrayAndFields {
-    bytes32 constant STORAGE_POSITION = keccak256("compose.validation.case6.mapping-value");
+contract Case7Canonical {
+    bytes32 constant STORAGE_POSITION = keccak256("compose.validation.case7.mapping-value");
 
     struct Node {
-        uint256[] values;
         address target;
-        bool enabled;
+        bytes4 previousId;
+        bytes8 nextId;
     }
 
     struct Storage { mapping(bytes4 => Node[]) nodes; }
 
-    function writeNode(bytes4 selector, uint256 value, address target, bool enabled) external {
+    function writeNode(bytes4 selector, address target, bytes4 previousId, bytes8 nextId) external {
         Node storage node = _storage().nodes[selector].push();
-        node.values.push(value);
         node.target = target;
-        node.enabled = enabled;
+        node.previousId = previousId;
+        node.nextId = nextId;
     }
 
     function _storage() private pure returns (Storage storage s) {

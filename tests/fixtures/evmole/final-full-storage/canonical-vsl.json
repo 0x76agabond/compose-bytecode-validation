@@ -1429,6 +1429,197 @@
       "virtualPath": "compose.fixture.virtual-storage.370",
       "parentVirtualPath": "compose.fixture.virtual-storage",
       "diamondName": null
+    },
+    {
+      "id": "0xabedc3d637c4270165a7b27ee6ae328f3197aca9a8c0796006da7cdd10b77608",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf1",
+        "0x2f",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf1",
+        "0x2f",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ]
+      ],
+      "source": "erc8042",
+      "sourceName": "Canonical.sol",
+      "contractName": "FullStorageFacet",
+      "structName": "TerminalStorage",
+      "virtualPath": "compose.fixture.terminal.v1",
+      "parentVirtualPath": null,
+      "diamondName": null
+    },
+    {
+      "id": "0xc8d2d25298f5d3f8edbcae4a09126c84ec7713d98196d4fd27f1b41ba7cb7b84",
+      "parentPath": "compose.fixture.terminal.v1",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0x2f",
+        "0x03"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0x2f",
+        "0x03"
+      ],
+      "slots": [
+        [
+          256
+        ],
+        [
+          160
+        ]
+      ],
+      "source": "erc8042",
+      "sourceName": "Canonical.sol",
+      "contractName": "FullStorageFacet",
+      "structName": "TerminalStorage",
+      "virtualPath": "compose.fixture.terminal.v1.0",
+      "parentVirtualPath": "compose.fixture.terminal.v1",
+      "diamondName": null
+    },
+    {
+      "id": "0xa9f32181051ead051ccf5a195aad94169671bb7083c114ddded86d5e59a185ea",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf1",
+        "0x2f",
+        "0xf2",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf1",
+        "0x2f",
+        "0xf2",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ]
+      ],
+      "source": "erc8042",
+      "sourceName": "Canonical.sol",
+      "contractName": "FullStorageFacet",
+      "structName": "NestedStorage",
+      "virtualPath": "compose.fixture.nested.v1",
+      "parentVirtualPath": null,
+      "diamondName": null
+    },
+    {
+      "id": "0x24777657fabacd622efe58d18d606f23167fa885d717c55a67a508eaa069fdf3",
+      "parentPath": "compose.fixture.nested.v1",
+      "kind": "immutable",
+      "codeWidth": 1,
+      "layout": [
+        "0x2f",
+        "0x01",
+        "0x03"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0x2f",
+        "0x01",
+        "0x03"
+      ],
+      "slots": [
+        [
+          256
+        ],
+        [
+          8,
+          160
+        ]
+      ],
+      "source": "erc8042",
+      "sourceName": "Canonical.sol",
+      "contractName": "FullStorageFacet",
+      "structName": "NestedStorage",
+      "virtualPath": "compose.fixture.nested.v1.0",
+      "parentVirtualPath": "compose.fixture.nested.v1",
+      "diamondName": null
+    },
+    {
+      "id": "0x68bb2bc4d8e4378546a9999b95a65a37f1c2fdc8b40e726c499265112dfd0f11",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf1",
+        "0x72",
+        "0x2f",
+        "0xff",
+        "0xf1",
+        "0x73",
+        "0x2f",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf1",
+        "0x72",
+        "0x2f",
+        "0xff",
+        "0xf1",
+        "0x73",
+        "0x2f",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ],
+        [
+          256
+        ]
+      ],
+      "source": "erc8042",
+      "sourceName": "Canonical.sol",
+      "contractName": "FullStorageFacet",
+      "structName": "DynamicKeyStorage",
+      "virtualPath": "compose.fixture.dynamic-keys.v1",
+      "parentVirtualPath": null,
+      "diamondName": null
+    },
+    {
+      "id": "0x5fbe730493d4d6bba5566d123ef64c2fec69f132a53d2f15c5748e3dbea14219",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0x72",
+        "0x73"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0x72",
+        "0x73"
+      ],
+      "slots": [
+        [
+          256
+        ],
+        [
+          256
+        ]
+      ],
+      "source": "erc8042",
+      "sourceName": "Canonical.sol",
+      "contractName": "FullStorageFacet",
+      "structName": "DynamicDataStorage",
+      "virtualPath": "compose.fixture.dynamic-data.v1",
+      "parentVirtualPath": null,
+      "diamondName": null
     }
   ]
 }

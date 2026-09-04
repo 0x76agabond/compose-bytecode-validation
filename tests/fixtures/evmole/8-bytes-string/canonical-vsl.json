@@ -1,0 +1,51 @@
+{
+  "records": [
+    {
+      "id": "0x4ab4bae54fe962f965f7b40c483f3a12821f7a7f685efa59efc810378524834d",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0x72",
+        "0x73",
+        "0xf2",
+        "0x72",
+        "0xff",
+        "0xf2",
+        "0x73",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0x72",
+        "0x73",
+        "0xf2",
+        "0x72",
+        "0xff",
+        "0xf2",
+        "0x73",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ],
+        [
+          256
+        ],
+        [
+          256
+        ],
+        [
+          256
+        ]
+      ],
+      "source": "erc8042",
+      "sourceName": "Canonical.sol",
+      "contractName": "Case8Canonical",
+      "structName": "Storage",
+      "virtualPath": "compose.validation.case8.bytes-string",
+      "parentVirtualPath": null,
+      "diamondName": null
+    }
+  ]
+}

@@ -15,6 +15,7 @@ enum Expectation {
     Collision,
     CollisionOrUncertain,
     CompatibleEvidence,
+    KnownLimitation,
 }
 
 struct Case {
@@ -153,33 +154,53 @@ const CASES: &[Case] = &[
     Case {
         name: "6-array-mapping-struct",
         directory: "6-array-mapping-struct",
+        minimum_canonical_validated: 3,
+        maximum_canonical_uncertain: 0,
+        variants: &[
+            Variant {
+                name: "canonical-indexed-mapping-array-struct",
+                source: "Canonical.sol",
+                contract: "Case6Canonical",
+                expectation: Expectation::Canonical,
+            },
+            Variant {
+                name: "incompatible-indexed-member-order",
+                source: "Incompatible.sol",
+                contract: "Case6Incompatible",
+                expectation: Expectation::Collision,
+            },
+        ],
+    },
+    Case {
+        name: "7-array-mapping-struct-push",
+        directory: "7-array-mapping-struct-push",
         minimum_canonical_validated: 4,
         maximum_canonical_uncertain: 0,
         variants: &[
             Variant {
                 name: "canonical-mapping-array-struct",
                 source: "Canonical.sol",
-                contract: "Case6Canonical",
+                contract: "Case7Canonical",
                 expectation: Expectation::Canonical,
             },
             Variant {
                 name: "incompatible-mapping-array-struct",
                 source: "IncompatibleOnlyArray.sol",
-                contract: "Case6IncompatibleOnlyArray",
+                contract: "Case7IncompatibleOnlyArray",
                 expectation: Expectation::Collision,
             },
             Variant {
                 name: "incompatible-mapping-array-and-fields",
                 source: "IncompatibleArrayAndFields.sol",
-                contract: "Case6IncompatibleArrayAndFields",
+                contract: "Case7IncompatibleArrayAndFields",
                 expectation: Expectation::Collision,
             },
         ],
     },
     Case {
-        name: "7-full-storage",
-        directory: "7-full-storage",
-        minimum_canonical_validated: 24,
+        name: "final-full-storage",
+        directory: "final-full-storage",
+        minimum_canonical_validated: 30,
         maximum_canonical_uncertain: 0,
         variants: &[
             Variant {
@@ -199,6 +220,26 @@ const CASES: &[Case] = &[
                 source: "Incompatible.sol",
                 contract: "IncompatibleStorageFacet",
                 expectation: Expectation::Collision,
+            },
+        ],
+    },
+    Case {
+        name: "8-bytes-string",
+        directory: "8-bytes-string",
+        minimum_canonical_validated: 0,
+        maximum_canonical_uncertain: usize::MAX,
+        variants: &[
+            Variant {
+                name: "canonical-bytes-string",
+                source: "Canonical.sol",
+                contract: "Case8Canonical",
+                expectation: Expectation::KnownLimitation,
+            },
+            Variant {
+                name: "bytes-string-semantic-variant",
+                source: "Incompatible.sol",
+                contract: "Case8BytesStringVariant",
+                expectation: Expectation::KnownLimitation,
             },
         ],
     },
@@ -302,6 +343,12 @@ fn main() {
                         variant.name
                     );
                 }
+                Expectation::KnownLimitation => assert!(
+                    !report.collisions.is_empty() || !report.uncertain_scopes.is_empty(),
+                    "{} / {} no longer exercises its documented limitation",
+                    case.name,
+                    variant.name
+                ),
             }
         }
     }

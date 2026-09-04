@@ -82,7 +82,7 @@ identity are storage compatibility evidence.
 
 ## Fixture Coverage
 
-The seven fixtures in `tests/fixtures/evmole/` are write-based challenge suites.
+The nine fixtures in `tests/fixtures/evmole/` are write-based challenge suites.
 Each directory contains a canonical Solidity contract, its checked-in canonical
 VSL, and one or more incompatible contracts that use the same storage root.
 Foundry builds every runtime bytecode before the runner compares each variant
@@ -95,8 +95,10 @@ against the canonical VSL.
 | `3-storage-key` | Storage-derived mapping keys and dynamic/fixed indexes | VSL anchors the loaded `uint64` key; dynamic and fixed packed element mismatches collide. |
 | `4-mapping-struct` | Reordered packed members inside a mapping value | Mapping-value child slots and packed fields validate; reordered members collide. |
 | `5-array-struct` | Packed and multi-slot array structs, reordered members, and adjacent arrays | Canonical child paths validate; reordered fields and an incompatible element stride collide. |
-| `6-array-mapping-struct` | Mapping to an array of packed structs, including a nested dynamic array variant | Recursive mapping-to-array-to-struct paths validate; incompatible nested containers and extra fields collide. |
-| `7-full-storage` | Full representative VSL: packed primitives, inline structs, mappings, arrays, fixed arrays, and struct containers | Canonical writes validate across 24 recovered variables; compatible prefix evidence remains safe and incompatible container/type changes collide. |
+| `6-array-mapping-struct` | Indexed mapping to an array of packed structs | Canonical indexed writes validate; reordered members collide without uncertainty. |
+| `7-array-mapping-struct-push` | Mapping to an array of packed structs created with `push()`, including a nested dynamic array variant | Recursive paths validate; incompatible nested containers and extra fields collide, with scoped uncertainty where `push()` loses a child boundary. |
+| `final-full-storage` | Full representative VSL: packed primitives, inline structs, mappings, arrays, fixed arrays, struct containers, and independent ERC-8110-style domains | Canonical writes validate across 30 recovered variables; terminal member compatibility validates, while an incompatible terminal type collides. |
+| `8-bytes-string` | `bytes`, `string`, `bytes[]`, and `string[]` assignment and append flows | Known tracer limitation: canonical array appends currently produce false collisions and scoped uncertainty. |
 
 An inferred fallback `uint256` cannot prove a collision. The raw tracer marks
 whether the write value type was actually recovered; fallback values are
@@ -105,7 +107,7 @@ as container metadata rather than as element writes.
 
 ### Current Result Snapshot
 
-The current assertion-backed run covers 20 contracts across the seven fixture
+The current assertion-backed run covers 24 contracts across the nine fixture
 families:
 
 | Fixture | Variant | Collisions | Validated | Scoped uncertainty |
@@ -124,12 +126,16 @@ families:
 | `5-array-struct` | incompatible wide reordered members | 2 | 1 | 0 |
 | `5-array-struct` | incompatible address array | 0 | 1 | 0 |
 | `5-array-struct` | adjacent arrays | 1 | 1 | 0 |
-| `6-array-mapping-struct` | canonical mapping-array-struct | 0 | 4 | 0 |
-| `6-array-mapping-struct` | incompatible mapping array struct | 1 | 1 | 1 |
-| `6-array-mapping-struct` | incompatible mapping array and fields | 3 | 1 | 1 |
-| `7-full-storage` | canonical full storage | 0 | 24 | 0 |
-| `7-full-storage` | compatible prefix storage | 0 | 1 | 0 |
-| `7-full-storage` | incompatible full storage | 7 | 3 | 1 |
+| `6-array-mapping-struct` | canonical indexed mapping-array-struct | 0 | 3 | 0 |
+| `6-array-mapping-struct` | incompatible indexed member order | 3 | 0 | 0 |
+| `7-array-mapping-struct-push` | canonical mapping-array-struct | 0 | 4 | 0 |
+| `7-array-mapping-struct-push` | incompatible mapping array struct | 1 | 1 | 1 |
+| `7-array-mapping-struct-push` | incompatible mapping array and fields | 3 | 1 | 1 |
+| `final-full-storage` | canonical full storage | 0 | 30 | 0 |
+| `final-full-storage` | compatible prefix storage | 0 | 1 | 0 |
+| `final-full-storage` | incompatible full storage | 12 | 4 | 1 |
+| `8-bytes-string` | canonical bytes and string | 31 | 2 | 4 |
+| `8-bytes-string` | bytes/string semantic variant | 31 | 2 | 4 |
 
 All variants currently complete without an unresolved-root diagnostic. The
 engine reliably tracks root slots, static slot shifts, selectors, program
@@ -143,24 +149,33 @@ Mapping-value structs retain constant child-slot deltas from `KECCAK256 +
 constant` and packed write masks. The storage tracer also preserves ordered
 path segments for mappings, dynamic arrays, and slot offsets. The validator
 walks those segments recursively through VSL virtual struct children, so cases
-4, 5, and 6 use the same path-matching mechanism rather than case-specific
+4 through 7 use the same path-matching mechanism rather than case-specific
 rules. This validates packed and multi-slot array-struct members, detects
 element-stride contradictions, and detects nested dynamic containers or fields
 that exceed the canonical child struct span.
 
 Some writes remain deliberately scoped uncertainty when the tracer knows a
 concrete storage position but loses the nested child path or value type. In the
-case 6 incompatible variants, an inner array-length update shares the canonical
+case 7 `push()` incompatible variants, an inner array-length update shares the canonical
 first-field position after the tracer loses its element index, so it cannot
 prove a contradiction by itself. This does not suppress independently recovered
 member writes or their collisions.
 
-The full-storage fixture also retains VSL-only coverage for `bytes`, `string`,
-external and internal function values, fixed struct arrays, nested struct
-containers, and dynamic `bytes`/`string` mapping keys. Its canonical bytecode
-only writes paths that the current tracer can recover without scoped
-uncertainty; unsupported write shapes remain a separate challenge rather than
-being treated as safe evidence.
+The full-storage fixture keeps its original `compose.fixture.virtual-storage`
+domain and appends four ERC-8110-style independent domains:
+`terminal.v1`, `nested.v1`, `dynamic-keys.v1`, and `dynamic-data.v1`. They
+exercise terminal struct-member ambiguity, mapping-to-dynamic-array-to-struct
+paths, dynamic `bytes`/`string` mapping keys, and dynamic `bytes`/`string`
+value writes. A source type difference is not itself a collision: writing
+`uint256` through `mapping(uint256 => uint256)` is accepted when it targets the
+canonical `Node.amount` member, while an `address` write at that same position
+is a collision.
+
+Fixture 8 is intentionally not a passing validation claim. `bytes` and
+`string` share a physical encoding, so exchanging them is not itself a storage
+collision. More importantly, the current tracer mis-reconstructs append paths
+for `bytes[]` and `string[]`, producing false collisions even for canonical
+bytecode. The fixture preserves that behavior as a bounded hardening target.
 
 ## Run the Validator
 

@@ -1,7 +1,7 @@
 {
   "records": [
     {
-      "id": "0x0e8d18e6ad6cc5862c11399f5bfe901323d6b0941473d591b0d4e06ced6c1244",
+      "id": "0x360ee8637c4439b0f6a6fc5283fd0fe1c31fd6470859c4ace8394d163bbeccb4",
       "kind": "normal",
       "codeWidth": 1,
       "layout": [
@@ -24,15 +24,15 @@
       ],
       "source": "slot-assignment",
       "sourceName": "Canonical.sol",
-      "contractName": "Case6Canonical",
+      "contractName": "Case7Canonical",
       "structName": "Storage",
-      "virtualPath": "compose.validation.case6.mapping-array-struct",
+      "virtualPath": "compose.validation.case7.mapping-value",
       "parentVirtualPath": null,
       "diamondName": null
     },
     {
-      "id": "0xfd80f11e3f3e9f8cce75a4eede1ed679a61fc045daf40c5ca84c30386f535ff5",
-      "parentPath": "compose.validation.case6.mapping-array-struct",
+      "id": "0x32e59d95dda8ce3c0ec5de252d56c8d75e7fe343ed52f061eafa5e82bce60939",
+      "parentPath": "compose.validation.case7.mapping-value",
       "kind": "immutable",
       "codeWidth": 1,
       "layout": [
@@ -55,10 +55,10 @@
       ],
       "source": "slot-assignment",
       "sourceName": "Canonical.sol",
-      "contractName": "Case6Canonical",
+      "contractName": "Case7Canonical",
       "structName": "Storage",
-      "virtualPath": "compose.validation.case6.mapping-array-struct.0",
-      "parentVirtualPath": "compose.validation.case6.mapping-array-struct",
+      "virtualPath": "compose.validation.case7.mapping-value.0",
+      "parentVirtualPath": "compose.validation.case7.mapping-value",
       "diamondName": null
     }
   ]
