@@ -25,7 +25,7 @@ The layout is a small recursive token stream:
 - `0xf1`: mapping;
 - `0xf2`: dynamic array;
 - `0xf3`: fixed array;
-- `0xf4`: struct; and
+- `0xf4`: struct;
 - `0xff`: end of the current container.
 
 For example, this Solidity shape:
