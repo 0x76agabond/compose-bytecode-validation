@@ -1,0 +1,88 @@
+{
+  "project": "testinit2",
+  "compose": "0.1.3",
+  "framework": "foundry",
+  "diamonds": {
+    "testinit2": {
+      "contract": "src/Diamond.sol:Diamond",
+      "facets": {
+        "DiamondInspectFacet": {
+          "source": "package",
+          "contract": "DiamondInspectFacet",
+          "package": "@perfect-abstractions/compose"
+        },
+        "ERC20DataFacet": {
+          "source": "package",
+          "contract": "ERC20DataFacet",
+          "package": "@perfect-abstractions/compose"
+        },
+        "ERC20ApproveFacet": {
+          "source": "package",
+          "contract": "ERC20ApproveFacet",
+          "package": "@perfect-abstractions/compose"
+        },
+        "ERC20TransferFacet": {
+          "source": "package",
+          "contract": "ERC20TransferFacet",
+          "package": "@perfect-abstractions/compose"
+        },
+        "DiamondUpgradeFacet": {
+          "source": "package",
+          "contract": "DiamondUpgradeFacet",
+          "package": "@perfect-abstractions/compose"
+        },
+        "ERC165Facet": {
+          "source": "package",
+          "contract": "ERC165Facet",
+          "package": "@perfect-abstractions/compose"
+        },
+        "ERC20BurnFacet": {
+          "source": "package",
+          "contract": "ERC20BurnFacet",
+          "package": "@perfect-abstractions/compose"
+        },
+        "ERC20MetadataFacet": {
+          "source": "package",
+          "contract": "ERC20MetadataFacet",
+          "package": "@perfect-abstractions/compose"
+        },
+        "ERC20PermitFacet": {
+          "source": "package",
+          "contract": "ERC20PermitFacet",
+          "package": "@perfect-abstractions/compose"
+        },
+        "ERC20BridgeableFacet": {
+          "source": "package",
+          "contract": "ERC20BridgeableFacet",
+          "package": "@perfect-abstractions/compose"
+        },
+        "ERC20SelectorCollisionError": {
+          "source": "local",
+          "contract": "src/facets/ERC20SelectorCollisionError.sol:ERC20SelectorCollisionError"
+        },
+        "ERC20IdentifierCollisionError": {
+          "source": "local",
+          "contract": "src/facets/ERC20IdentifierCollisionError.sol:ERC20IdentifierCollisionError"
+        },
+        "FullStorageFacet": {
+          "source": "local",
+          "contract": "src/facets/FullStorageFacet.sol:FullStorageFacet"
+        },
+        "DelegateCallFacet": {
+          "source": "local",
+          "contract": "src/facets/DelegateCallFacet.sol:DelegateCallFacet"
+        },
+        "IncompatibleStorageFacet": {
+          "source": "local",
+          "contract": "src/facets/IncompatibleStorageFacet.sol:IncompatibleStorageFacet"
+        }
+      }
+    }
+  },
+  "chains": {
+    "local": {
+      "rpc": "http://127.0.0.1:8545",
+      "chainId": 31337
+    }
+  }
+}

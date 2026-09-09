@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+pub(crate) mod calldata;
 #[allow(clippy::module_inception)] // Keeps the experiment's public name `compose`.
 pub mod compose;
 pub mod compose_vsl_bias;

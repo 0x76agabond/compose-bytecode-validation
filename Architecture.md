@@ -144,6 +144,11 @@ dynamic array(base slot expression)
 unknown hash preimage
 ```
 
+`DELEGATECALL` is also retained as raw `DelegateCallEvidence`: target
+provenance, forwarded calldata selector when recoverable, caller selector, and
+program counter. This evidence is not part of EVMole's public decompiler
+storage record.
+
 Important opcode patterns:
 
 ```text
@@ -231,6 +236,19 @@ storage_validation::validate(&StorageValidationInput {
 }) -> StorageValidationReport
 ```
 
+For on-chain delegatecall validation, Compose uses:
+
+```rust
+storage_validation::validate_with_delegate_calls(
+    &input,
+    &runtime_code_source,
+    DelegateCallValidationContext {
+        storage_address: original_diamond_address,
+        max_depth,
+    },
+)
+```
+
 `bytecode` is one facet's deployed runtime bytecode. `virtual_storage_layout`
 is the complete canonical layout that Compose produced for the selected
 diamond. The input deliberately has no fixture name, contract name, or
@@ -245,19 +263,24 @@ The validation layer uses VSL twice, for distinct purposes:
    It follows the ordered storage path through mappings, dynamic arrays,
    offsets, and virtual struct children.
 
-It reports four independent evidence collections:
+It reports four direct-storage evidence collections:
 
 - `collisions` for proven contradictions;
 - `validatedVariables` for recovered writes compatible with VSL;
 - `uncertainScopes` for unresolved writes at a concrete storage location;
 - `diagnostics` when even the storage root cannot be recovered.
 
-The active validator consumes `StorageEvidence` after symbolic tracing but
-before EVMole's final slot-record collapse. It validates root slot, packed
-offset, bit width, scalar/container semantics, dynamic-array element stride,
-and nested container/virtual-struct paths. The eight fixture families exercise
-the same recursive path matcher for mapping structs, array structs, and
-mapping-to-array-to-struct layouts.
+`delegatecallWarnings` is a separate, non-blocking collection for a target
+that cannot be followed. It is intentionally not an `uncertainScopes` entry:
+the warning describes code reachability, not an unresolved persistent storage
+write.
+
+The active validator consumes persistent `StorageEvidence` after symbolic
+tracing but before EVMole's final slot-record collapse. It validates root slot,
+packed offset, bit width, scalar/container semantics, dynamic-array element
+stride, and nested container/virtual-struct paths. The fixture families
+exercise the same recursive path matcher for mapping structs, array structs,
+and mapping-to-array-to-struct layouts.
 
 The matcher has generic transition rules rather than fixture rules:
 
@@ -306,7 +329,9 @@ slot expression and before `finalize_slot_records()` groups and flattens it.
 `src/arguments/mod.rs` remains valuable for recovering calldata type anchors.
 `src/storage_validation/vsl.rs` owns VSL decoding, trace hints, and semantic
 comparison. `src/storage_validation/mod.rs` owns the recursive VSL path walk
-and validation policy.
+and validation policy. `src/compose/calldata.rs` is a Compose-only calldata
+adapter for forwarded delegatecall payloads; it does not alter the generic
+`src/evm/vm.rs` behavior.
 
 The Compose matcher belongs above the generic engine and owns policy:
 
@@ -316,6 +341,18 @@ known storage location with unresolved type/path        -> scoped uncertainty
 unresolved storage root                                 -> diagnostic
 recovered evidence compatible with VSL                  -> validated variable
 ```
+
+Delegatecall policy is intentionally narrower:
+
+```text
+constant / immutable target                             -> fetch code and trace selector
+concrete persistent SLOAD target                        -> read original proxy storage, fetch code, trace selector
+calldata / transient / symbolic / unavailable target    -> non-blocking delegatecall warning
+```
+
+Recursive delegatecalls reuse the same full-diamond VSL and original storage
+address. A `(target, selector)` visited set and configurable maximum depth
+prevent cyclic or unbounded traces. `CALLCODE` is not modeled.
 
 Mapping key type alone should remain diagnostic evidence rather than a storage
 collision verdict. Unknown or flattened evidence must never prove `safe`.

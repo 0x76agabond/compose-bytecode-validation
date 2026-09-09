@@ -1,0 +1,77 @@
+{
+  "records": [
+    {
+      "id": "0xa6973eed3de84acaf8014b435c6e17fa270e0287da3798de9acb3d8b7ff7383e",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf1",
+        "0x53",
+        "0xff",
+        "0x53",
+        "0x53",
+        "0x13",
+        "0x13"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf1",
+        "0x53",
+        "0xff",
+        "0x53",
+        "0x53",
+        "0x13",
+        "0x13"
+      ],
+      "slots": [
+        [
+          256
+        ],
+        [
+          32,
+          32,
+          32,
+          32
+        ]
+      ],
+      "source": "erc8042",
+      "sourceName": "src/CanonicalDiamondStorage.sol",
+      "contractName": "CanonicalDiamondStorage",
+      "structName": "DiamondStorage",
+      "virtualPath": "erc8153.diamond",
+      "parentVirtualPath": null,
+      "diamondName": null
+    },
+    {
+      "id": "0x88723c62479b2590cee4113ab02cc2287601120367badad7b8f5894143361ddd",
+      "parentPath": "erc8153.diamond",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0x03",
+        "0x53",
+        "0x53"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0x03",
+        "0x53",
+        "0x53"
+      ],
+      "slots": [
+        [
+          160,
+          32,
+          32
+        ]
+      ],
+      "source": "erc8042",
+      "sourceName": "src/CanonicalDiamondStorage.sol",
+      "contractName": "CanonicalDiamondStorage",
+      "structName": "DiamondStorage",
+      "virtualPath": "erc8153.diamond.0",
+      "parentVirtualPath": "erc8153.diamond",
+      "diamondName": null
+    }
+  ]
+}

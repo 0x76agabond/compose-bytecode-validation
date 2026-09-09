@@ -94,6 +94,7 @@ collections:
 | `validatedVariables` | A recovered persistent write matches one VSL variable. |
 | `uncertainScopes` | A write has a concrete storage scope but cannot be compared conclusively. |
 | `diagnostics` | The engine cannot recover even a concrete persistent storage root. |
+| `delegatecallWarnings` | A delegatecall target or selector cannot be traced with the supplied chain context. This is non-blocking and separate from storage uncertainty. |
 
 No collision is not a complete proof of safety. Unreached paths and unsupported
 compiler patterns remain outside the evidence set.
@@ -126,7 +127,7 @@ identity are storage compatibility evidence.
 
 ## Fixture Coverage
 
-The nine fixtures in `tests/fixtures/evmole/` are write-based challenge suites.
+The fixture families in `tests/fixtures/evmole/` are write-based challenge suites.
 Each directory contains a canonical Solidity contract, its checked-in canonical
 VSL, and one or more incompatible contracts that use the same storage root.
 Foundry builds every runtime bytecode before the runner compares each variant
@@ -143,6 +144,7 @@ against the canonical VSL.
 | `7-array-mapping-struct-push` | Mapping to an array of packed structs created with `push()`, including a nested dynamic array variant | Recursive paths validate; incompatible nested containers and extra fields collide, with scoped uncertainty where `push()` loses a child boundary. |
 | `final-full-storage` | Full representative VSL: packed primitives, inline structs, mappings, arrays, fixed arrays, struct containers, and independent ERC-8110-style domains | Canonical writes validate across 30 recovered variables; incompatible terminal, nested, and dynamic-key writes collide. |
 | `8-bytes-string` | `bytes`, `string`, `bytes[]`, and `string[]` assignment and append flows | Solidity encodes `bytes` and `string` identically in storage, so their type swap is not a physical collision. Known tracer limitation: canonical array appends currently produce false collisions and scoped uncertainty. |
+| `9-delegatecall` | Immutable, persistent-storage, calldata, transient, symbolic, empty-code, missing-selector, and nested delegatecall targets | Proven targets recurse against the same VSL; untraceable targets return non-blocking delegatecall warnings. |
 
 An inferred fallback `uint256` cannot prove a collision. The raw tracer marks
 whether the write value type was actually recovered; fallback values are
@@ -151,8 +153,9 @@ as container metadata rather than as element writes.
 
 ### Current Result Snapshot
 
-The current assertion-backed run covers 24 contracts across the nine fixture
-families:
+The storage assertion runner covers the direct-write fixture variants below.
+`9-delegatecall` has its own Anvil-backed runner because it fetches target code
+and persistent target addresses from chain state:
 
 | Fixture | Variant | Collisions | Validated | Scoped uncertainty |
 | --- | --- | ---: | ---: | ---: |
@@ -180,6 +183,7 @@ families:
 | `final-full-storage` | incompatible full storage | 12 | 4 | 1 |
 | `8-bytes-string` | canonical bytes and string | 31 | 2 | 4 |
 | `8-bytes-string` | swapped bytes/string types | 31 | 2 | 4 |
+| `9-delegatecall` | deployed diamond target graph | 1 | 4 | 0 |
 
 All variants currently complete without an unresolved-root diagnostic. The
 engine reliably tracks root slots, static slot shifts, selectors, program
@@ -221,6 +225,37 @@ collision. More importantly, the current tracer mis-reconstructs append paths
 for `bytes[]` and `string[]`, producing false collisions even for canonical
 bytecode. The fixture preserves that behavior as a bounded hardening target.
 
+Fixture 9 runs against Anvil rather than static fixture bytecode. Its deployed
+graph produces five expected non-blocking delegatecall warnings: calldata,
+transient storage, symbolic target, empty target code, and missing selector.
+
+## Delegatecall Validation
+
+`validate_with_delegate_calls` is an optional extension of the direct-write
+validator. It receives a chain code source and the original diamond/proxy
+storage address. A recovered target is traced recursively against the same
+full-diamond VSL because `DELEGATECALL` changes code context but retains storage
+context.
+
+The validator follows a deliberately narrow target allowlist:
+
+- bytecode constants and immutable runtime values;
+- persistent `SLOAD` values when their concrete slot can be read through
+  `eth_getStorageAt`; and
+- nested targets reached from those traces, bounded by a configurable depth
+  limit and `(target, selector)` visited set.
+
+Calldata, `TLOAD`, hash/arithmetic expressions, unresolved storage slots, empty
+code, RPC failures, and targets without the recovered selector do not cause a
+storage collision verdict. They produce a non-blocking `delegatecallWarning`.
+`CALLCODE` is intentionally ignored. Persistent `SSTORE` is the only storage
+write domain compared with VSL; transient storage is not layout state.
+
+The generic EVMole VM remains unchanged. Compose uses
+`src/compose/calldata.rs` only for this path: it bounds materialized
+`CALLDATACOPY` bytes while preserving EVMole's symbolic `CALLDATASIZE` on the
+stack, which is enough to recover forwarded selectors.
+
 ## Run the Validator
 
 Build all write fixtures with Foundry and run the assertion-backed comparison:
@@ -236,6 +271,13 @@ Run the test suite:
 
 ```sh
 cargo test --features fixture
+```
+
+Run the delegatecall fixture, which starts an Anvil node, deploys the diamond,
+and validates the deployed target graph:
+
+```sh
+./run-delegatecall-fixture.sh
 ```
 
 ## Generate VSL Inputs

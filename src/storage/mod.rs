@@ -4,9 +4,10 @@
 use crate::{
     DynSolType, Selector, Slot,
     collections::HashMap,
+    compose::calldata::ComposeCallData,
     evm::{
         U256, VAL_1, VAL_1_B, VAL_32_B,
-        calldata::{CallDataImpl, CallDataLabel, CallDataLabelType},
+        calldata::{CallDataLabel, CallDataLabelType},
         element::Element,
         op,
         vm::{StepResult, Vm},
@@ -284,6 +285,29 @@ pub(crate) enum StoragePathSegment {
     Offset {
         slots: usize,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DelegateCallTarget {
+    Constant([u8; 20]),
+    Storage {
+        slot: Option<Slot>,
+        byte_offset: u8,
+        symbolic_path: String,
+    },
+    TransientStorage {
+        symbolic_path: String,
+    },
+    Calldata,
+    Unresolved,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DelegateCallEvidence {
+    pub target: DelegateCallTarget,
+    pub selector: Option<Selector>,
+    pub pc: usize,
+    pub caller_selector: Selector,
 }
 
 fn storage_path(expr: &SlotExpr, path: &mut Vec<StoragePathSegment>) {
@@ -732,8 +756,72 @@ struct CheckedArrayIndex {
 struct Storage {
     loaded: SlotHashMap,
     checked_array_indexes: Vec<CheckedArrayIndex>,
+    delegate_calls: Vec<DelegateCallEvidence>,
 }
 impl Storage {
+    fn record_delegate_call(
+        &mut self,
+        target: &Element<Label>,
+        calldata_offset: &Element<Label>,
+        calldata_size: &Element<Label>,
+        vm: &Vm<Label, ComposeCallData<Label>>,
+        pc: usize,
+        caller_selector: Selector,
+    ) {
+        let target = match target.label.as_ref() {
+            Some(Label::Constant) => {
+                let mut address = [0_u8; 20];
+                address.copy_from_slice(&target.data[12..]);
+                DelegateCallTarget::Constant(address)
+            }
+            Some(Label::Loaded(storage)) => {
+                let storage = storage.borrow();
+                if storage.domain == StorageDomain::Persistent {
+                    DelegateCallTarget::Storage {
+                        slot: storage.slot,
+                        byte_offset: storage.rshift,
+                        symbolic_path: format!("{:?}", storage.slot_expr),
+                    }
+                } else {
+                    DelegateCallTarget::TransientStorage {
+                        symbolic_path: format!("{:?}", storage.slot_expr),
+                    }
+                }
+            }
+            Some(Label::Typed(_, Some(affine))) if !affine.calldata_terms.is_empty() => {
+                DelegateCallTarget::Calldata
+            }
+            _ => DelegateCallTarget::Unresolved,
+        };
+
+        let offset = u32::try_from(calldata_offset).ok();
+        let size = u32::try_from(calldata_size).ok();
+        let selector = match (offset, size) {
+            (Some(offset), Some(size)) if size >= 4 => {
+                let (data, _) = vm.memory.load(offset, 4);
+                Some([data[0], data[1], data[2], data[3]])
+            }
+            _ => None,
+        };
+
+        self.delegate_calls.push(DelegateCallEvidence {
+            target,
+            selector,
+            pc,
+            caller_selector,
+        });
+        if cfg!(feature = "trace_storage") || std::env::var_os("COMPOSE_TRACE_STORAGE").is_some() {
+            let evidence = self.delegate_calls.last().expect("just inserted evidence");
+            eprintln!(
+                "[storage-validation:delegatecall] caller_selector={} pc={} target={:?} selector={:?}",
+                alloy_primitives::hex::encode(evidence.caller_selector),
+                evidence.pc,
+                evidence.target,
+                evidence.selector.map(alloy_primitives::hex::encode),
+            );
+        }
+    }
+
     fn record_array_index(&mut self, storage: &Rc<RefCell<StorageElement>>, index: AffineExpr) {
         let storage = storage.borrow();
         let checked = CheckedArrayIndex {
@@ -833,11 +921,12 @@ impl Storage {
 }
 
 fn analyze(
-    vm: &mut Vm<Label, CallDataImpl<Label>>,
+    vm: &mut Vm<Label, ComposeCallData<Label>>,
     st: &mut Storage,
     hints: &StorageTraceHints,
     ret: StepResult<Label>,
     pc: usize,
+    caller_selector: Selector,
 ) -> Result<Option<usize>, Box<dyn std::error::Error>> {
     match ret {
         StepResult {
@@ -845,6 +934,15 @@ fn analyze(
             ..
         } => {
             vm.stack.peek_mut()?.label = Some(Label::Constant);
+        }
+
+        StepResult {
+            op: op::DELEGATECALL,
+            args: [target, ..],
+            exargs,
+            ..
+        } if exargs.len() >= 3 => {
+            st.record_delegate_call(&target, &exargs[1], &exargs[2], vm, pc, caller_selector);
         }
 
         StepResult {
@@ -1494,11 +1592,12 @@ fn analyze(
 }
 
 fn analyze_rec(
-    mut vm: Vm<Label, CallDataImpl<Label>>,
+    mut vm: Vm<Label, ComposeCallData<Label>>,
     st: &mut Storage,
     hints: &StorageTraceHints,
     gas_limit: u32,
     depth: u32,
+    caller_selector: Selector,
 ) -> u32 {
     let mut gas_used = 0;
 
@@ -1510,27 +1609,53 @@ fn analyze_rec(
         let pc = vm.pc;
         let ret = match vm.step() {
             Ok(v) => v,
-            Err(_e) => {
-                // println!("{}", _e);
+            Err(error) => {
+                if std::env::var_os("COMPOSE_TRACE_STORAGE_OPS").is_some() {
+                    eprintln!(
+                        "[storage-validation:trace-error] selector={} pc={} error={error}",
+                        alloy_primitives::hex::encode(caller_selector),
+                        pc,
+                    );
+                }
                 break;
             }
         };
+        if std::env::var_os("COMPOSE_TRACE_STORAGE_OPS").is_some() {
+            eprintln!(
+                "[storage-validation:op] selector={} pc={} op={}",
+                alloy_primitives::hex::encode(caller_selector),
+                pc,
+                ret.op,
+            );
+        }
         gas_used += ret.gas_used;
         if gas_used > gas_limit {
             break;
         }
 
-        match analyze(&mut vm, st, hints, ret, pc) {
-            Err(_) => {
-                // println!("errbrk");
+        match analyze(&mut vm, st, hints, ret, pc, caller_selector) {
+            Err(error) => {
+                if std::env::var_os("COMPOSE_TRACE_STORAGE_OPS").is_some() {
+                    eprintln!(
+                        "[storage-validation:analysis-error] selector={} pc={} error={error}",
+                        alloy_primitives::hex::encode(caller_selector),
+                        pc,
+                    );
+                }
                 break;
             }
             Ok(Some(other_pc)) => {
                 if depth < 8 && other_pc < vm.code.len() {
                     let mut cloned = vm.fork();
                     cloned.pc = other_pc;
-                    gas_used +=
-                        analyze_rec(cloned, st, hints, (gas_limit - gas_used) / 2, depth + 1);
+                    gas_used += analyze_rec(
+                        cloned,
+                        st,
+                        hints,
+                        (gas_limit - gas_used) / 2,
+                        depth + 1,
+                        caller_selector,
+                    );
                 }
             }
             Ok(None) => {}
@@ -1540,6 +1665,11 @@ fn analyze_rec(
     gas_used
 }
 
+struct FunctionStorageLayouts {
+    loaded: SlotHashMap,
+    delegate_calls: Vec<DelegateCallEvidence>,
+}
+
 fn analyze_one_function(
     code: &[u8],
     selector: Selector,
@@ -1547,7 +1677,8 @@ fn analyze_one_function(
     is_fallback: bool,
     hints: &StorageTraceHints,
     gas_limit: u32,
-) -> SlotHashMap {
+    use_compose_calldata: bool,
+) -> FunctionStorageLayouts {
     if cfg!(feature = "trace_storage") {
         println!(
             "analyze selector {}\n",
@@ -1555,7 +1686,11 @@ fn analyze_one_function(
         );
     }
 
-    let calldata = CallDataImpl::<Label>::new(selector, arguments);
+    let calldata = if use_compose_calldata {
+        ComposeCallData::<Label>::bounded_copy(selector, arguments)
+    } else {
+        ComposeCallData::<Label>::passthrough(selector, arguments)
+    };
     let mut vm = Vm::new(code, &calldata);
 
     let mut st = Storage::default();
@@ -1565,16 +1700,20 @@ fn analyze_one_function(
         if let Some(g) = execute_until_function_start(&mut vm, gas_limit) {
             gas_used += g;
         } else {
-            return st.loaded;
+            return FunctionStorageLayouts {
+                loaded: st.loaded,
+                delegate_calls: st.delegate_calls,
+            };
         }
     }
 
     #[allow(unused_assignments)]
     if gas_used < gas_limit {
-        gas_used += analyze_rec(vm, &mut st, hints, gas_limit - gas_used, 0);
+        gas_used += analyze_rec(vm, &mut st, hints, gas_limit - gas_used, 0, selector);
     }
 
-    st.loaded
+    let loaded = st
+        .loaded
         .into_iter()
         .map(|(k, v)| {
             // Filter out impossible packed entries: full-slot/container types cannot start mid-slot.
@@ -1613,7 +1752,11 @@ fn analyze_one_function(
                 },
             )
         })
-        .collect()
+        .collect();
+    FunctionStorageLayouts {
+        loaded,
+        delegate_calls: st.delegate_calls,
+    }
 }
 
 type SlotRecords = BTreeMap<(Slot, u8), Vec<(Selector, StorageElement)>>;
@@ -1628,6 +1771,7 @@ pub(crate) struct StorageLayouts {
     pub storage: Vec<StorageRecord>,
     pub transient_storage: Vec<StorageRecord>,
     pub evidence: Vec<StorageEvidence>,
+    pub delegate_calls: Vec<DelegateCallEvidence>,
 }
 
 #[derive(Clone, Debug)]
@@ -1823,6 +1967,63 @@ where
     I: IntoIterator<Item = (Selector, usize, D)>,
     D: AsRef<[DynSolType]>,
 {
+    contract_storage_with_hints_options(code, functions, gas_limit, hints, true)
+}
+
+pub(crate) fn contract_storage_with_hints_options<I, D>(
+    code: &[u8],
+    functions: I,
+    gas_limit: u32,
+    hints: &StorageTraceHints,
+    include_fallback: bool,
+) -> StorageLayouts
+where
+    I: IntoIterator<Item = (Selector, usize, D)>,
+    D: AsRef<[DynSolType]>,
+{
+    contract_storage_with_hints_options_mode(
+        code,
+        functions,
+        gas_limit,
+        hints,
+        include_fallback,
+        false,
+    )
+}
+
+pub(crate) fn contract_storage_with_hints_options_compose<I, D>(
+    code: &[u8],
+    functions: I,
+    gas_limit: u32,
+    hints: &StorageTraceHints,
+    include_fallback: bool,
+) -> StorageLayouts
+where
+    I: IntoIterator<Item = (Selector, usize, D)>,
+    D: AsRef<[DynSolType]>,
+{
+    contract_storage_with_hints_options_mode(
+        code,
+        functions,
+        gas_limit,
+        hints,
+        include_fallback,
+        true,
+    )
+}
+
+fn contract_storage_with_hints_options_mode<I, D>(
+    code: &[u8],
+    functions: I,
+    gas_limit: u32,
+    hints: &StorageTraceHints,
+    include_fallback: bool,
+    use_compose_calldata: bool,
+) -> StorageLayouts
+where
+    I: IntoIterator<Item = (Selector, usize, D)>,
+    D: AsRef<[DynSolType]>,
+{
     let real_gas_limit = if gas_limit == 0 {
         1e6 as u32
     } else {
@@ -1831,6 +2032,7 @@ where
 
     let mut slot_records = DomainSlotRecords::default();
     let mut evidence = Vec::new();
+    let mut delegate_calls = Vec::new();
 
     let functions: Vec<_> = functions.into_iter().collect();
     let selectors: BTreeSet<Selector> = functions.iter().map(|(sel, _, _)| *sel).collect();
@@ -1841,21 +2043,34 @@ where
     }
 
     for &(selector, _, ref arguments) in &functions {
-        let loaded = analyze_one_function(
+        let layouts = analyze_one_function(
             code,
             selector,
             arguments.as_ref(),
             false,
             hints,
             real_gas_limit,
+            use_compose_calldata,
         );
-        collect_storage_evidence(&mut evidence, selector, false, &loaded);
-        collect_slot_records(&mut slot_records, selector, loaded);
+        collect_storage_evidence(&mut evidence, selector, false, &layouts.loaded);
+        collect_slot_records(&mut slot_records, selector, layouts.loaded);
+        delegate_calls.extend(layouts.delegate_calls);
     }
 
-    let fallback = analyze_one_function(code, fallback_selector, &[], true, hints, real_gas_limit);
-    collect_storage_evidence(&mut evidence, fallback_selector, true, &fallback);
-    collect_slot_records(&mut slot_records, fallback_selector, fallback);
+    if include_fallback {
+        let fallback = analyze_one_function(
+            code,
+            fallback_selector,
+            &[],
+            true,
+            hints,
+            real_gas_limit,
+            use_compose_calldata,
+        );
+        collect_storage_evidence(&mut evidence, fallback_selector, true, &fallback.loaded);
+        collect_slot_records(&mut slot_records, fallback_selector, fallback.loaded);
+        delegate_calls.extend(fallback.delegate_calls);
+    }
 
     StorageLayouts {
         storage: finalize_slot_records(slot_records.persistent, fallback_selector, "persistent"),
@@ -1865,6 +2080,7 @@ where
             "transient",
         ),
         evidence,
+        delegate_calls,
     }
 }
 

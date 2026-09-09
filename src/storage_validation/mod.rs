@@ -11,19 +11,24 @@ use crate::{
     Slot,
     arguments::function_arguments,
     selectors::function_selectors,
-    storage::{StorageEvidence, StoragePathSegment, contract_storage_with_hints},
+    storage::{
+        DelegateCallEvidence, DelegateCallTarget, StorageEvidence, StorageLayouts,
+        StoragePathSegment, contract_storage_with_hints_options_compose,
+    },
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use vsl::{
     SemanticCompatibility, compare_semantic_types, expected_field_start_at, expected_type_at,
     has_container_shape_contradiction, raw_expected_type_at, storage_trace_hints,
     virtual_struct_child,
 };
 
+#[cfg(feature = "rpc")]
+pub use types::HttpRpcCodeSource;
 pub use types::{
-    StorageCollision, StorageDiagnostic, StorageLocation, StorageValidationInput,
-    StorageValidationReport, UncertainStorageScope, ValidatedVariable, VirtualStorageLayout,
-    VirtualStorageLayoutRecord,
+    DelegateCallValidationContext, DelegateCallWarning, RuntimeCodeSource, StorageCollision,
+    StorageDiagnostic, StorageLocation, StorageValidationInput, StorageValidationReport,
+    UncertainStorageScope, ValidatedVariable, VirtualStorageLayout, VirtualStorageLayoutRecord,
 };
 
 #[derive(Clone, Debug)]
@@ -96,10 +101,48 @@ type WriteEvidenceKey = (Option<Slot>, usize, u8, [u8; 4], Option<usize>, String
 
 /// Validates persistent `SSTORE` evidence against the supplied full-diamond VSL.
 pub fn validate(input: &StorageValidationInput) -> StorageValidationReport {
+    let trace = trace_layouts(input, None);
+    validate_layouts(&trace.layouts, &input.virtual_storage_layout)
+}
+
+/// Validates direct writes and recursively follows constant delegatecall targets.
+///
+/// Every target is checked against the same full-diamond VSL because
+/// `DELEGATECALL` preserves the caller's storage context.
+pub fn validate_with_delegate_calls(
+    input: &StorageValidationInput,
+    source: &dyn RuntimeCodeSource,
+    context: DelegateCallValidationContext,
+) -> StorageValidationReport {
+    let trace = trace_layouts(input, None);
+    let mut report = validate_layouts(&trace.layouts, &input.virtual_storage_layout);
+    let mut visited = BTreeSet::new();
+    follow_delegate_calls(
+        &trace.layouts.delegate_calls,
+        &input.virtual_storage_layout,
+        source,
+        context,
+        &mut visited,
+        &mut report,
+        0,
+    );
+    report
+}
+
+struct TraceLayouts {
+    layouts: StorageLayouts,
+    analyzed_selectors: BTreeSet<[u8; 4]>,
+}
+
+fn trace_layouts(
+    input: &StorageValidationInput,
+    selected_selectors: Option<&BTreeSet<[u8; 4]>>,
+) -> TraceLayouts {
     let trace_hints = storage_trace_hints(&input.virtual_storage_layout);
     let functions = function_selectors(&input.bytecode, 0, None)
         .0
         .into_iter()
+        .filter(|(selector, _)| selected_selectors.is_none_or(|wanted| wanted.contains(selector)))
         .map(|(selector, (offset, _))| {
             let arguments = function_arguments(&input.bytecode, &selector, 0);
             (selector, offset, arguments)
@@ -117,13 +160,15 @@ pub fn validate(input: &StorageValidationInput) -> StorageValidationReport {
             );
         }
     }
-    let layouts = contract_storage_with_hints(
+    let analyzed_selectors = functions.iter().map(|(selector, _, _)| *selector).collect();
+    let layouts = contract_storage_with_hints_options_compose(
         &input.bytecode,
         functions
             .iter()
             .map(|(selector, offset, arguments)| (*selector, *offset, arguments)),
         0,
         &trace_hints,
+        selected_selectors.is_none() && functions.is_empty(),
     );
 
     if std::env::var_os("COMPOSE_TRACE_STORAGE").is_some() {
@@ -149,11 +194,263 @@ pub fn validate(input: &StorageValidationInput) -> StorageValidationReport {
         }
     }
 
+    TraceLayouts {
+        layouts,
+        analyzed_selectors,
+    }
+}
+
+fn validate_layouts(
+    layouts: &StorageLayouts,
+    layout: &VirtualStorageLayout,
+) -> StorageValidationReport {
     let mut report = StorageValidationReport::default();
-    for evidence in best_write_evidence(&layouts.evidence) {
-        validate_write(evidence, &input.virtual_storage_layout, &mut report);
+    for evidence in best_write_evidence(&layouts.evidence)
+        .into_iter()
+        .filter(|evidence| evidence.domain == "persistent")
+    {
+        validate_write(evidence, layout, &mut report);
     }
     report
+}
+
+fn follow_delegate_calls(
+    calls: &[DelegateCallEvidence],
+    layout: &VirtualStorageLayout,
+    source: &dyn RuntimeCodeSource,
+    context: DelegateCallValidationContext,
+    visited: &mut BTreeSet<([u8; 20], [u8; 4])>,
+    report: &mut StorageValidationReport,
+    depth: usize,
+) {
+    for call in calls {
+        let caller_selector = hex(&call.caller_selector);
+        let target_description = delegate_target_description(&call.target);
+        let Some(selector) = call.selector else {
+            report.delegatecall_warnings.push(DelegateCallWarning {
+                caller_selector,
+                pc: call.pc,
+                target: target_description,
+                selector: None,
+                reason: "delegatecall calldata selector could not be recovered".to_owned(),
+            });
+            continue;
+        };
+        if depth >= context.max_depth {
+            report.delegatecall_warnings.push(DelegateCallWarning {
+                caller_selector,
+                pc: call.pc,
+                target: target_description,
+                selector: Some(hex(&selector)),
+                reason: format!(
+                    "delegatecall recursion reached depth limit {}",
+                    context.max_depth
+                ),
+            });
+            continue;
+        }
+        let Some(address) = resolve_delegate_target(
+            &call.target,
+            source,
+            context.storage_address,
+            &caller_selector,
+            call.pc,
+            selector,
+            report,
+        ) else {
+            continue;
+        };
+        if !visited.insert((address, selector)) {
+            report.delegatecall_warnings.push(DelegateCallWarning {
+                caller_selector,
+                pc: call.pc,
+                target: target_description,
+                selector: Some(hex(&selector)),
+                reason: "delegatecall target and selector were already traced".to_owned(),
+            });
+            continue;
+        }
+        let code = match source.code_at(address) {
+            Ok(code) if !code.is_empty() => code,
+            Ok(_) => {
+                report.delegatecall_warnings.push(DelegateCallWarning {
+                    caller_selector,
+                    pc: call.pc,
+                    target: target_description,
+                    selector: Some(hex(&selector)),
+                    reason: "delegatecall target has empty runtime code".to_owned(),
+                });
+                continue;
+            }
+            Err(error) => {
+                report.delegatecall_warnings.push(DelegateCallWarning {
+                    caller_selector,
+                    pc: call.pc,
+                    target: target_description,
+                    selector: Some(hex(&selector)),
+                    reason: format!("failed to fetch delegatecall target code: {error}"),
+                });
+                continue;
+            }
+        };
+
+        let target_input = StorageValidationInput {
+            bytecode: code,
+            virtual_storage_layout: layout.clone(),
+        };
+        let selectors = BTreeSet::from([selector]);
+        let target_trace = trace_layouts(&target_input, Some(&selectors));
+        if !target_trace.analyzed_selectors.contains(&selector) {
+            report.delegatecall_warnings.push(DelegateCallWarning {
+                caller_selector,
+                pc: call.pc,
+                target: target_description,
+                selector: Some(hex(&selector)),
+                reason: "delegatecall target does not expose the recovered ABI selector".to_owned(),
+            });
+            continue;
+        }
+        let target_report = validate_layouts(&target_trace.layouts, layout);
+        merge_report(report, target_report);
+        follow_delegate_calls(
+            &target_trace.layouts.delegate_calls,
+            layout,
+            source,
+            context,
+            visited,
+            report,
+            depth + 1,
+        );
+    }
+}
+
+fn resolve_delegate_target(
+    target: &DelegateCallTarget,
+    source: &dyn RuntimeCodeSource,
+    storage_address: [u8; 20],
+    caller_selector: &str,
+    pc: usize,
+    selector: [u8; 4],
+    report: &mut StorageValidationReport,
+) -> Option<[u8; 20]> {
+    match target {
+        DelegateCallTarget::Constant(address) => Some(*address),
+        DelegateCallTarget::Storage {
+            slot: Some(slot),
+            byte_offset,
+            symbolic_path,
+        } => {
+            if *byte_offset > 12 {
+                report.delegatecall_warnings.push(DelegateCallWarning {
+                    caller_selector: caller_selector.to_owned(),
+                    pc,
+                    target: format!("storage slot={} path={symbolic_path}", hex(slot)),
+                    selector: Some(hex(&selector)),
+                    reason: "delegatecall address crosses a storage-word boundary".to_owned(),
+                });
+                return None;
+            }
+            let word = match source.storage_at(storage_address, *slot) {
+                Ok(word) => word,
+                Err(error) => {
+                    report.delegatecall_warnings.push(DelegateCallWarning {
+                        caller_selector: caller_selector.to_owned(),
+                        pc,
+                        target: format!("storage slot={} path={symbolic_path}", hex(slot)),
+                        selector: Some(hex(&selector)),
+                        reason: format!("failed to fetch delegatecall target storage: {error}"),
+                    });
+                    return None;
+                }
+            };
+            let end = 32 - usize::from(*byte_offset);
+            let mut address = [0_u8; 20];
+            address.copy_from_slice(&word[end - 20..end]);
+            Some(address)
+        }
+        DelegateCallTarget::Storage {
+            slot: None,
+            symbolic_path,
+            ..
+        } => {
+            report.delegatecall_warnings.push(DelegateCallWarning {
+                caller_selector: caller_selector.to_owned(),
+                pc,
+                target: format!("storage slot=unresolved path={symbolic_path}"),
+                selector: Some(hex(&selector)),
+                reason: "delegatecall target storage slot could not be resolved".to_owned(),
+            });
+            None
+        }
+        DelegateCallTarget::TransientStorage { symbolic_path } => {
+            report.delegatecall_warnings.push(DelegateCallWarning {
+                caller_selector: caller_selector.to_owned(),
+                pc,
+                target: format!("transient storage path={symbolic_path}"),
+                selector: Some(hex(&selector)),
+                reason:
+                    "delegatecall target comes from transient storage, which is not chain-readable"
+                        .to_owned(),
+            });
+            None
+        }
+        DelegateCallTarget::Calldata | DelegateCallTarget::Unresolved => {
+            report.delegatecall_warnings.push(DelegateCallWarning {
+                caller_selector: caller_selector.to_owned(),
+                pc,
+                target: delegate_target_description(target),
+                selector: Some(hex(&selector)),
+                reason: delegate_target_reason(target).to_owned(),
+            });
+            None
+        }
+    }
+}
+
+fn merge_report(report: &mut StorageValidationReport, other: StorageValidationReport) {
+    report.collisions.extend(other.collisions);
+    report.validated_variables.extend(other.validated_variables);
+    report.uncertain_scopes.extend(other.uncertain_scopes);
+    report.diagnostics.extend(other.diagnostics);
+    report
+        .delegatecall_warnings
+        .extend(other.delegatecall_warnings);
+}
+
+fn delegate_target_description(target: &DelegateCallTarget) -> String {
+    match target {
+        DelegateCallTarget::Constant(address) => hex(address),
+        DelegateCallTarget::Storage {
+            slot,
+            byte_offset,
+            symbolic_path,
+        } => {
+            format!(
+                "storage slot={} offset={byte_offset} path={symbolic_path}",
+                slot.map(|slot| hex(&slot))
+                    .unwrap_or_else(|| "unresolved".to_owned())
+            )
+        }
+        DelegateCallTarget::TransientStorage { symbolic_path } => {
+            format!("transient storage path={symbolic_path}")
+        }
+        DelegateCallTarget::Calldata => "calldata".to_owned(),
+        DelegateCallTarget::Unresolved => "unresolved".to_owned(),
+    }
+}
+
+fn delegate_target_reason(target: &DelegateCallTarget) -> &'static str {
+    match target {
+        DelegateCallTarget::Storage { .. } => {
+            "delegatecall target is loaded from storage and requires deployed storage context"
+        }
+        DelegateCallTarget::TransientStorage { .. } => {
+            "delegatecall target is loaded from transient storage"
+        }
+        DelegateCallTarget::Calldata => "delegatecall target is supplied by calldata",
+        DelegateCallTarget::Unresolved => "delegatecall target could not be recovered",
+        DelegateCallTarget::Constant(_) => unreachable!("constant targets are traceable"),
+    }
 }
 
 fn best_write_evidence(evidence: &[StorageEvidence]) -> Vec<&StorageEvidence> {
@@ -892,15 +1189,274 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{inferred_width, slot_delta, validate_write};
+    use super::{
+        follow_delegate_calls, inferred_width, resolve_delegate_target, slot_delta, validate_write,
+    };
     use crate::{
         Selector, Slot,
         compose::{
             VirtualStorageLayoutKind, VirtualStorageLayoutRecord, VirtualStorageLayoutSource,
         },
-        storage::StorageEvidence,
-        storage_validation::{StorageValidationReport, VirtualStorageLayout},
+        storage::{DelegateCallEvidence, DelegateCallTarget, StorageEvidence},
+        storage_validation::{
+            DelegateCallValidationContext, RuntimeCodeSource, StorageValidationReport,
+            VirtualStorageLayout,
+        },
     };
+    use std::collections::BTreeSet;
+
+    struct TestCodeSource {
+        code: Result<Vec<u8>, String>,
+        storage: Result<[u8; 32], String>,
+    }
+
+    impl RuntimeCodeSource for TestCodeSource {
+        fn code_at(&self, _: [u8; 20]) -> Result<Vec<u8>, String> {
+            self.code.clone()
+        }
+
+        fn storage_at(&self, _: [u8; 20], _: [u8; 32]) -> Result<[u8; 32], String> {
+            self.storage.clone()
+        }
+    }
+
+    #[test]
+    fn resolves_a_packed_delegate_target_from_chain_storage() {
+        let expected = [0xabu8; 20];
+        let mut word = [0_u8; 32];
+        // An address shifted by four bytes is packed into bytes 8..28.
+        word[8..28].copy_from_slice(&expected);
+        let source = TestCodeSource {
+            code: Ok(Vec::new()),
+            storage: Ok(word),
+        };
+        let target = DelegateCallTarget::Storage {
+            slot: Some([0x11; 32]),
+            byte_offset: 4,
+            symbolic_path: "Plain(0x11)".to_owned(),
+        };
+        let mut report = StorageValidationReport::default();
+
+        let resolved = resolve_delegate_target(
+            &target,
+            &source,
+            [0x22; 20],
+            "0x12345678",
+            12,
+            [0x12, 0x34, 0x56, 0x78],
+            &mut report,
+        );
+
+        assert_eq!(resolved, Some(expected));
+        assert!(report.delegatecall_warnings.is_empty());
+    }
+
+    #[test]
+    fn scopes_delegate_target_storage_fetch_failures_as_warnings() {
+        let source = TestCodeSource {
+            code: Ok(Vec::new()),
+            storage: Err("offline".to_owned()),
+        };
+        let target = DelegateCallTarget::Storage {
+            slot: Some([0x11; 32]),
+            byte_offset: 0,
+            symbolic_path: "Plain(0x11)".to_owned(),
+        };
+        let mut report = StorageValidationReport::default();
+
+        assert!(
+            resolve_delegate_target(
+                &target,
+                &source,
+                [0x22; 20],
+                "0x12345678",
+                12,
+                [0x12, 0x34, 0x56, 0x78],
+                &mut report,
+            )
+            .is_none()
+        );
+
+        assert_eq!(report.delegatecall_warnings.len(), 1);
+        assert!(
+            report.delegatecall_warnings[0]
+                .reason
+                .contains("failed to fetch delegatecall target storage")
+        );
+    }
+
+    #[test]
+    fn scopes_untraceable_delegate_targets_as_warnings() {
+        let source = TestCodeSource {
+            code: Ok(Vec::new()),
+            storage: Ok([0; 32]),
+        };
+        let targets = [
+            DelegateCallTarget::Calldata,
+            DelegateCallTarget::Unresolved,
+            DelegateCallTarget::TransientStorage {
+                symbolic_path: "Plain(0x01)".to_owned(),
+            },
+            DelegateCallTarget::Storage {
+                slot: None,
+                byte_offset: 0,
+                symbolic_path: "UnknownHash".to_owned(),
+            },
+        ];
+        let mut report = StorageValidationReport::default();
+
+        for target in &targets {
+            assert!(
+                resolve_delegate_target(
+                    target,
+                    &source,
+                    [0x22; 20],
+                    "0x12345678",
+                    12,
+                    [0x12, 0x34, 0x56, 0x78],
+                    &mut report,
+                )
+                .is_none()
+            );
+        }
+
+        assert_eq!(report.delegatecall_warnings.len(), targets.len());
+    }
+
+    #[test]
+    fn reports_unavailable_delegate_target_code_as_a_scoped_warning() {
+        let call = DelegateCallEvidence {
+            target: DelegateCallTarget::Constant([0x44; 20]),
+            selector: Some([0x12, 0x34, 0x56, 0x78]),
+            pc: 7,
+            caller_selector: [0xaa; 4],
+        };
+        let context = DelegateCallValidationContext::new([0x55; 20]);
+        let mut report = StorageValidationReport::default();
+        let mut visited = BTreeSet::new();
+        let source = TestCodeSource {
+            code: Err("offline".to_owned()),
+            storage: Ok([0; 32]),
+        };
+
+        follow_delegate_calls(
+            &[call],
+            &VirtualStorageLayout::default(),
+            &source,
+            context,
+            &mut visited,
+            &mut report,
+            0,
+        );
+
+        assert_eq!(report.delegatecall_warnings.len(), 1);
+        assert!(
+            report.delegatecall_warnings[0]
+                .reason
+                .contains("failed to fetch delegatecall target code")
+        );
+    }
+
+    #[test]
+    fn reports_empty_or_selectorless_delegate_target_code_as_warnings() {
+        let call = DelegateCallEvidence {
+            target: DelegateCallTarget::Constant([0x44; 20]),
+            selector: Some([0x12, 0x34, 0x56, 0x78]),
+            pc: 7,
+            caller_selector: [0xaa; 4],
+        };
+        let context = DelegateCallValidationContext::new([0x55; 20]);
+
+        let mut empty_report = StorageValidationReport::default();
+        follow_delegate_calls(
+            &[call.clone()],
+            &VirtualStorageLayout::default(),
+            &TestCodeSource {
+                code: Ok(Vec::new()),
+                storage: Ok([0; 32]),
+            },
+            context,
+            &mut BTreeSet::new(),
+            &mut empty_report,
+            0,
+        );
+        assert!(
+            empty_report.delegatecall_warnings[0]
+                .reason
+                .contains("empty runtime code")
+        );
+
+        let mut selector_report = StorageValidationReport::default();
+        follow_delegate_calls(
+            &[call],
+            &VirtualStorageLayout::default(),
+            &TestCodeSource {
+                code: Ok(vec![0x00]),
+                storage: Ok([0; 32]),
+            },
+            context,
+            &mut BTreeSet::new(),
+            &mut selector_report,
+            0,
+        );
+        assert!(
+            selector_report.delegatecall_warnings[0]
+                .reason
+                .contains("does not expose the recovered ABI selector")
+        );
+    }
+
+    #[test]
+    fn reports_delegatecall_depth_and_cycles_as_warnings() {
+        let target = [0x44; 20];
+        let selector = [0x12, 0x34, 0x56, 0x78];
+        let call = DelegateCallEvidence {
+            target: DelegateCallTarget::Constant(target),
+            selector: Some(selector),
+            pc: 7,
+            caller_selector: [0xaa; 4],
+        };
+        let source = TestCodeSource {
+            code: Ok(Vec::new()),
+            storage: Ok([0; 32]),
+        };
+
+        let mut depth_report = StorageValidationReport::default();
+        follow_delegate_calls(
+            &[call.clone()],
+            &VirtualStorageLayout::default(),
+            &source,
+            DelegateCallValidationContext {
+                storage_address: [0x55; 20],
+                max_depth: 0,
+            },
+            &mut BTreeSet::new(),
+            &mut depth_report,
+            0,
+        );
+        assert!(
+            depth_report.delegatecall_warnings[0]
+                .reason
+                .contains("depth limit")
+        );
+
+        let mut cycle_report = StorageValidationReport::default();
+        let mut visited = BTreeSet::from([(target, selector)]);
+        follow_delegate_calls(
+            &[call],
+            &VirtualStorageLayout::default(),
+            &source,
+            DelegateCallValidationContext::new([0x55; 20]),
+            &mut visited,
+            &mut cycle_report,
+            0,
+        );
+        assert!(
+            cycle_report.delegatecall_warnings[0]
+                .reason
+                .contains("already traced")
+        );
+    }
 
     #[test]
     fn keeps_mapping_and_arrays_as_word_variables() {
