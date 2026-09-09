@@ -354,6 +354,13 @@ Recursive delegatecalls reuse the same full-diamond VSL and original storage
 address. A `(target, selector)` visited set and configurable maximum depth
 prevent cyclic or unbounded traces. `CALLCODE` is not modeled.
 
+Persistent target resolution is snapshot-based: `eth_getStorageAt` reads the
+pinned pre-transaction state. The current host has no storage overlay for an
+`SSTORE` that precedes `SLOAD` in the same path. Consequently, an
+`upgradeAndCall` pattern that installs an implementation and immediately
+delegatecalls it is a known unsupported case; the snapshot can identify the
+previous implementation rather than the runtime target.
+
 Mapping key type alone should remain diagnostic evidence rather than a storage
 collision verdict. Unknown or flattened evidence must never prove `safe`.
 

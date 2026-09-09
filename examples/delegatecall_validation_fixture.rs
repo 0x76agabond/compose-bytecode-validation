@@ -14,6 +14,7 @@ fn parse_address(value: &str) -> [u8; 20] {
 
 fn main() {
     let rpc_url = env::var("COMPOSE_RPC_URL").expect("COMPOSE_RPC_URL is required");
+    let block_tag = env::var("COMPOSE_BLOCK_TAG").expect("COMPOSE_BLOCK_TAG is required");
     let caller_address = parse_address(
         &env::var("COMPOSE_CALLER_ADDRESS").expect("COMPOSE_CALLER_ADDRESS is required"),
     );
@@ -30,7 +31,7 @@ fn main() {
         .parse::<usize>()
         .expect("COMPOSE_EXPECT_DELEGATECALL_WARNINGS must be an integer");
 
-    let source = HttpRpcCodeSource::new(rpc_url, "latest");
+    let source = HttpRpcCodeSource::new(rpc_url, block_tag);
     let bytecode = source
         .code_at(caller_address)
         .expect("caller runtime bytecode");

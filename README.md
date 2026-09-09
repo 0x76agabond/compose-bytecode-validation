@@ -96,9 +96,6 @@ collections:
 | `diagnostics` | The engine cannot recover even a concrete persistent storage root. |
 | `delegatecallWarnings` | A delegatecall target or selector cannot be traced with the supplied chain context. This is non-blocking and separate from storage uncertainty. |
 
-No collision is not a complete proof of safety. Unreached paths and unsupported
-compiler patterns remain outside the evidence set.
-
 ## What Differs From Original EVMole
 
 Original EVMole is a general bytecode-to-Solidity recovery tool. Its storage
@@ -143,7 +140,7 @@ against the canonical VSL.
 | `6-array-mapping-struct` | Indexed mapping to an array of packed structs | Canonical indexed writes validate; reordered members collide without uncertainty. |
 | `7-array-mapping-struct-push` | Mapping to an array of packed structs created with `push()`, including a nested dynamic array variant | Recursive paths validate; incompatible nested containers and extra fields collide, with scoped uncertainty where `push()` loses a child boundary. |
 | `final-full-storage` | Full representative VSL: packed primitives, inline structs, mappings, arrays, fixed arrays, struct containers, and independent ERC-8110-style domains | Canonical writes validate across 30 recovered variables; incompatible terminal, nested, and dynamic-key writes collide. |
-| `8-bytes-string` | `bytes`, `string`, `bytes[]`, and `string[]` assignment and append flows | Solidity encodes `bytes` and `string` identically in storage, so their type swap is not a physical collision. Known tracer limitation: canonical array appends currently produce false collisions and scoped uncertainty. |
+| `8-bytes-string` | `bytes`, `string`, `bytes[]`, and `string[]` assignment and append flows | Solidity encodes `bytes` and `string` identically in storage, so their type swap is not a physical collision. |
 | `9-delegatecall` | Immutable, persistent-storage, calldata, transient, symbolic, empty-code, missing-selector, and nested delegatecall targets | Proven targets recurse against the same VSL; untraceable targets return non-blocking delegatecall warnings. |
 
 An inferred fallback `uint256` cannot prove a collision. The raw tracer marks
@@ -202,13 +199,6 @@ rules. This validates packed and multi-slot array-struct members, detects
 element-stride contradictions, and detects nested dynamic containers or fields
 that exceed the canonical child struct span.
 
-Some writes remain deliberately scoped uncertainty when the tracer knows a
-concrete storage position but loses the nested child path or value type. In the
-case 7 `push()` incompatible variants, an inner array-length update shares the canonical
-first-field position after the tracer loses its element index, so it cannot
-prove a contradiction by itself. This does not suppress independently recovered
-member writes or their collisions.
-
 The full-storage fixture keeps its original `compose.fixture.virtual-storage`
 domain and appends four ERC-8110-style independent domains:
 `terminal.v1`, `nested.v1`, `dynamic-keys.v1`, and `dynamic-data.v1`. They
@@ -218,12 +208,6 @@ value writes. A source type difference is not itself a collision: writing
 `uint256` through `mapping(uint256 => uint256)` is accepted when it targets the
 canonical `Node.amount` member, while an `address` write at that same position
 is a collision.
-
-Fixture 8 is intentionally not a passing validation claim. `bytes` and
-`string` share a physical encoding, so exchanging them is not itself a storage
-collision. More importantly, the current tracer mis-reconstructs append paths
-for `bytes[]` and `string[]`, producing false collisions even for canonical
-bytecode. The fixture preserves that behavior as a bounded hardening target.
 
 Fixture 9 runs against Anvil rather than static fixture bytecode. Its deployed
 graph produces five expected non-blocking delegatecall warnings: calldata,
@@ -245,16 +229,53 @@ The validator follows a deliberately narrow target allowlist:
 - nested targets reached from those traces, bounded by a configurable depth
   limit and `(target, selector)` visited set.
 
-Calldata, `TLOAD`, hash/arithmetic expressions, unresolved storage slots, empty
-code, RPC failures, and targets without the recovered selector do not cause a
-storage collision verdict. They produce a non-blocking `delegatecallWarning`.
-`CALLCODE` is intentionally ignored. Persistent `SSTORE` is the only storage
-write domain compared with VSL; transient storage is not layout state.
+Persistent `SSTORE` is the only storage write domain compared with VSL;
+transient storage is not layout state. Targets outside the supported recovery
+set are reported as non-blocking `delegatecallWarnings`.
 
 The generic EVMole VM remains unchanged. Compose uses
 `src/compose/calldata.rs` only for this path: it bounds materialized
 `CALLDATACOPY` bytes while preserving EVMole's symbolic `CALLDATASIZE` on the
 stack, which is enough to recover forwarded selectors.
+
+## Known Limitations
+
+### Evidence Coverage
+
+The validator proves recovered contradictions; an empty collision list is not a
+complete safety proof. Unreached paths, unsupported compiler output, and
+arbitrary assembly outside the symbolic tracer's supported patterns remain
+outside the evidence set.
+
+### Dynamic `bytes` and `string` Arrays
+
+`bytes` and `string` share Solidity's physical storage encoding, so exchanging
+them is not a collision. The current tracer also mis-reconstructs append paths
+for `bytes[]` and `string[]`, producing false collisions and scoped uncertainty
+even for canonical bytecode. Fixture 8 preserves this as a hardening target.
+
+### `push()` Child Boundaries
+
+For some nested dynamic-array `push()` paths, the tracer loses an element child
+boundary. It reports a scoped uncertainty for the affected array-length write;
+independently recovered member writes still validate or collide normally.
+
+### Delegatecall Target Sources
+
+Only constant/immutable targets and concrete persistent `SLOAD` targets are
+followed. Calldata, `TLOAD`, hash/arithmetic expressions, unresolved storage
+slots, empty code, RPC failures, and missing selectors produce a non-blocking
+`delegatecallWarning`. `CALLCODE` is intentionally not modeled.
+
+### In-Transaction Upgrades
+
+Persistent target recovery reads a pinned chain snapshot. It does not yet model
+an in-transaction storage overlay. A pattern such as `upgradeAndCall` can
+`SSTORE` a new implementation address and then `SLOAD` that same slot before
+the transaction finishes. `eth_getStorageAt` still returns the pre-transaction
+implementation, so this validator cannot prove the actual delegatecall target
+for that path. Treat upgrade-and-call flows as unsupported until the tracer
+tracks preceding storage writes into delegatecall target resolution.
 
 ## Run the Validator
 
@@ -274,7 +295,7 @@ cargo test --features fixture
 ```
 
 Run the delegatecall fixture, which starts an Anvil node, deploys the diamond,
-and validates the deployed target graph:
+pins the resulting block, and validates the deployed target graph:
 
 ```sh
 ./run-delegatecall-fixture.sh

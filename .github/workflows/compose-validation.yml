@@ -1,0 +1,82 @@
+name: Compose bytecode validation
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - src/**
+      - examples/**
+      - tests/fixtures/**
+      - tools/**
+      - run-storage-validation.sh
+      - run-delegatecall-fixture.sh
+      - .github/workflows/compose-validation.yml
+  pull_request:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - src/**
+      - examples/**
+      - tests/fixtures/**
+      - tools/**
+      - run-storage-validation.sh
+      - run-delegatecall-fixture.sh
+      - .github/workflows/compose-validation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Check Rust code
+        run: |
+          cargo fmt --check
+          cargo test --features fixture,rpc
+
+      - name: Run storage validation fixtures
+        run: bash ./run-storage-validation.sh 2>&1 | tee storage-validation.log
+
+      - name: Run delegatecall validation fixture
+        run: bash ./run-delegatecall-fixture.sh 2>&1 | tee delegatecall-validation.log
+
+      - name: Publish validation evidence
+        if: always()
+        run: |
+          {
+            echo "## Compose Bytecode Validation"
+            echo
+            echo "### Direct Storage Fixtures"
+            echo '```text'
+            grep -E '^\[storage-validation\]|^fixture=' storage-validation.log || true
+            echo '```'
+            echo
+            echo "### Delegatecall Fixture"
+            echo '```text'
+            grep '^\[storage-validation\]' delegatecall-validation.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: compose-validation-evidence
+          path: |
+            storage-validation.log
+            delegatecall-validation.log
+          if-no-files-found: warn

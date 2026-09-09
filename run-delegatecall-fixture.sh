@@ -90,8 +90,12 @@ cast send "$diamond" \
   --rpc-url "$rpc_url" \
   --private-key "$private_key" >/dev/null
 
+block_number="$(cast block-number --rpc-url "$rpc_url")"
+block_tag="$(printf '0x%x' "$block_number")"
+
 COMPOSE_RPC_URL="$rpc_url" \
-  COMPOSE_CALLER_ADDRESS="$delegate_facet" \
+COMPOSE_BLOCK_TAG="$block_tag" \
+COMPOSE_CALLER_ADDRESS="$delegate_facet" \
   COMPOSE_STORAGE_ADDRESS="$diamond" \
 COMPOSE_VSL="$(dirname "$project_dir")/canonical-vsl.json" \
 COMPOSE_EXPECT_COLLISIONS=1 \
