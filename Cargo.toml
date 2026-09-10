@@ -48,6 +48,14 @@ trace = [
 [lib]
 crate-type = ["cdylib", "lib"]
 
+[[example]]
+name = "storage_validation_fixtures"
+required-features = ["fixture"]
+
+[[example]]
+name = "delegatecall_validation_fixture"
+required-features = ["fixture", "rpc"]
+
 [profile.release]
 lto = true
 strip = true
