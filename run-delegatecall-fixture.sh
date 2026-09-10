@@ -18,8 +18,7 @@ trap cleanup EXIT
 
 cd "$project_dir"
 if [[ ! -d lib/Compose/src || ! -d lib/forge-std/src ]]; then
-  git init >/dev/null
-  forge install \
+  forge install --root "$project_dir" --no-git \
     foundry-rs/forge-std@bf647bd6046f2f7da30d0c2bf435e5c76a780c1b \
     Perfect-Abstractions/Compose@82a71731ffed49c3c1f08fc03851ebfaab47a1a7
 fi

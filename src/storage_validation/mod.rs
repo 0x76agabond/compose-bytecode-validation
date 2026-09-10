@@ -205,6 +205,7 @@ fn validate_layouts(
     layout: &VirtualStorageLayout,
 ) -> StorageValidationReport {
     let mut report = StorageValidationReport::default();
+    collect_byte_string_access_uncertainties(layouts, layout, &mut report);
     for evidence in best_write_evidence(&layouts.evidence)
         .into_iter()
         .filter(|evidence| evidence.domain == "persistent")
@@ -212,6 +213,42 @@ fn validate_layouts(
         validate_write(evidence, layout, &mut report);
     }
     report
+}
+
+fn collect_byte_string_access_uncertainties(
+    layouts: &StorageLayouts,
+    layout: &VirtualStorageLayout,
+    report: &mut StorageValidationReport,
+) {
+    for evidence in layouts
+        .evidence
+        .iter()
+        .filter(|item| item.domain == "persistent" && !item.is_fallback_probe)
+    {
+        let Some(slot) = evidence.slot else {
+            continue;
+        };
+        let VslPathMatch::Matched(matched) = match_vsl_variable(evidence, layout) else {
+            continue;
+        };
+        let Some(expected_type) = matched.expected_type else {
+            continue;
+        };
+        if !matches!(expected_type.as_str(), "bytes" | "string") {
+            continue;
+        }
+        push_byte_string_uncertainty(
+            report,
+            StorageLocation {
+                slot: hex(&slot),
+                offset: evidence.offset,
+                selector: hex(&evidence.selector),
+                pc: evidence.write_pc,
+                symbolic_path: evidence.symbolic_path.clone(),
+            },
+            matched.virtual_path,
+        );
+    }
 }
 
 fn follow_delegate_calls(
@@ -566,6 +603,11 @@ fn validate_write(
         return;
     }
 
+    if matches!(expected_type.as_str(), "bytes" | "string") {
+        push_byte_string_uncertainty(report, location, matched.virtual_path);
+        return;
+    }
+
     // A mask proves a concrete mapping-value field write. If that value is
     // not represented by a virtual child record, comparing it to the mapping
     // root would turn missing path reconstruction into a false collision.
@@ -694,6 +736,27 @@ fn validate_write(
     }
 }
 
+fn push_byte_string_uncertainty(
+    report: &mut StorageValidationReport,
+    location: StorageLocation,
+    virtual_path: String,
+) {
+    const REASON: &str =
+        "bytes and string storage accesses cannot be compared conclusively from bytecode";
+    if report.uncertain_scopes.iter().any(|scope| {
+        scope.virtual_path.as_deref() == Some(virtual_path.as_str())
+            && scope.location.selector == location.selector
+            && scope.reason == REASON
+    }) {
+        return;
+    }
+    report.uncertain_scopes.push(UncertainStorageScope {
+        location,
+        virtual_path: Some(virtual_path),
+        reason: REASON.to_owned(),
+    });
+}
+
 fn is_plain_dynamic_array_header(evidence: &StorageEvidence, expected_type: &str) -> bool {
     evidence.storage_path.is_empty()
         && evidence.offset == 0
@@ -757,6 +820,7 @@ fn match_recursive_vsl_root(
     let mut array_strides = Vec::new();
     let mut saw_container = false;
     let mut resolved_struct_child = false;
+    let mut consumed_byte_string_payload = false;
     let mut cursor_state = VslCursorState::Field;
 
     // Transition table: container segments unwrap the current field schema;
@@ -764,7 +828,11 @@ fn match_recursive_vsl_root(
     for segment in &evidence.storage_path {
         match segment {
             StoragePathSegment::Offset { slots } => {
-                if matches!(cursor_state, VslCursorState::StructRoot) {
+                if consumed_byte_string_payload || (saw_container && current.is_byte_string()) {
+                    // An offset after a bytes/string container belongs to its
+                    // element or long-data payload, not to the next VSL field.
+                    continue;
+                } else if matches!(cursor_state, VslCursorState::StructRoot) {
                     slot_index = *slots;
                     let Some(next) = raw_expected_type_at(record, slot_index, 0) else {
                         return VslPathMatch::Contradiction {
@@ -851,6 +919,14 @@ fn match_recursive_vsl_root(
                         return VslPathMatch::NotFound;
                     }
                     resolved_struct_child = true;
+                }
+                if current.is_byte_string() && !consumed_byte_string_payload {
+                    // Long bytes/string payloads live at keccak256(field slot).
+                    // EVMole surfaces that physical path as another dynamic array.
+                    consumed_byte_string_payload = true;
+                    saw_container = true;
+                    cursor_state = VslCursorState::Field;
+                    continue;
                 }
                 let Some(element) = current.dynamic_array_element() else {
                     return container_path_contradiction(

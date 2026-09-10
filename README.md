@@ -140,7 +140,7 @@ against the canonical VSL.
 | `6-array-mapping-struct` | Indexed mapping to an array of packed structs | Canonical indexed writes validate; reordered members collide without uncertainty. |
 | `7-array-mapping-struct-push` | Mapping to an array of packed structs created with `push()`, including a nested dynamic array variant | Recursive paths validate; incompatible nested containers and extra fields collide, with scoped uncertainty where `push()` loses a child boundary. |
 | `final-full-storage` | Full representative VSL: packed primitives, inline structs, mappings, arrays, fixed arrays, struct containers, and independent ERC-8110-style domains | Canonical writes validate across 30 recovered variables; incompatible terminal, nested, and dynamic-key writes collide. |
-| `8-bytes-string` | `bytes`, `string`, `bytes[]`, and `string[]` assignment and append flows | Solidity encodes `bytes` and `string` identically in storage, so their type swap is not a physical collision. |
+| `8-bytes-string` | `bytes`, `string`, `bytes[]`, and `string[]` assignment and append flows | Type swaps produce scoped uncertainty rather than false collisions; a proven incompatible container shape still collides. |
 | `9-delegatecall` | Immutable, persistent-storage, calldata, transient, symbolic, empty-code, missing-selector, and nested delegatecall targets | Proven targets recurse against the same VSL; untraceable targets return non-blocking delegatecall warnings. |
 
 An inferred fallback `uint256` cannot prove a collision. The raw tracer marks
@@ -175,11 +175,12 @@ and persistent target addresses from chain state:
 | `7-array-mapping-struct-push` | canonical mapping-array-struct | 0 | 4 | 0 |
 | `7-array-mapping-struct-push` | incompatible mapping array struct | 1 | 1 | 1 |
 | `7-array-mapping-struct-push` | incompatible mapping array and fields | 3 | 1 | 1 |
-| `final-full-storage` | canonical full storage | 0 | 30 | 0 |
+| `final-full-storage` | canonical full storage | 0 | 30 | 2 |
 | `final-full-storage` | compatible prefix storage | 0 | 1 | 0 |
-| `final-full-storage` | incompatible full storage | 12 | 4 | 1 |
-| `8-bytes-string` | canonical bytes and string | 31 | 2 | 4 |
-| `8-bytes-string` | swapped bytes/string types | 31 | 2 | 4 |
+| `final-full-storage` | incompatible full storage | 12 | 4 | 3 |
+| `8-bytes-string` | canonical bytes and string | 0 | 2 | 4 |
+| `8-bytes-string` | swapped bytes/string types | 0 | 2 | 4 |
+| `8-bytes-string` | incompatible outer container shape | 2 | 0 | 0 |
 | `9-delegatecall` | deployed diamond target graph | 1 | 4 | 0 |
 
 All variants currently complete without an unresolved-root diagnostic. The
@@ -247,12 +248,14 @@ complete safety proof. Unreached paths, unsupported compiler output, and
 arbitrary assembly outside the symbolic tracer's supported patterns remain
 outside the evidence set.
 
-### Dynamic `bytes` and `string` Arrays
+### Dynamic `bytes` and `string`
 
 `bytes` and `string` share Solidity's physical storage encoding, so exchanging
-them is not a collision. The current tracer also mis-reconstructs append paths
-for `bytes[]` and `string[]`, producing false collisions and scoped uncertainty
-even for canonical bytecode. Fixture 8 preserves this as a hardening target.
+them is not a physical collision. Accesses to these fields are reported as
+scoped uncertainty because bytecode cannot distinguish the source-level type.
+For `bytes[]` and `string[]`, the outer array header can still validate while
+each element and its payload remain uncertain. A proven incompatible outer
+container or root shape is still reported as a collision.
 
 ### `push()` Child Boundaries
 

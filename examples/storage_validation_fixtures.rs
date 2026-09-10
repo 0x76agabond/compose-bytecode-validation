@@ -15,7 +15,7 @@ enum Expectation {
     Collision,
     CollisionOrUncertain,
     CompatibleEvidence,
-    KnownLimitation,
+    ByteStringUncertainty,
 }
 
 struct Case {
@@ -201,7 +201,7 @@ const CASES: &[Case] = &[
         name: "final-full-storage",
         directory: "final-full-storage",
         minimum_canonical_validated: 30,
-        maximum_canonical_uncertain: 0,
+        maximum_canonical_uncertain: 2,
         variants: &[
             Variant {
                 name: "canonical-full-storage",
@@ -233,13 +233,19 @@ const CASES: &[Case] = &[
                 name: "canonical-bytes-string",
                 source: "Canonical.sol",
                 contract: "Case8Canonical",
-                expectation: Expectation::KnownLimitation,
+                expectation: Expectation::ByteStringUncertainty,
             },
             Variant {
                 name: "swapped-bytes-string-types",
                 source: "Incompatible.sol",
                 contract: "Case8BytesStringVariant",
-                expectation: Expectation::KnownLimitation,
+                expectation: Expectation::ByteStringUncertainty,
+            },
+            Variant {
+                name: "incompatible-container-shape",
+                source: "IncompatibleContainer.sol",
+                contract: "Case8IncompatibleContainer",
+                expectation: Expectation::Collision,
             },
         ],
     },
@@ -343,12 +349,27 @@ fn main() {
                         variant.name
                     );
                 }
-                Expectation::KnownLimitation => assert!(
-                    !report.collisions.is_empty() || !report.uncertain_scopes.is_empty(),
-                    "{} / {} no longer exercises its documented limitation",
-                    case.name,
-                    variant.name
-                ),
+                Expectation::ByteStringUncertainty => {
+                    assert!(
+                        report.collisions.is_empty(),
+                        "{} / {} must not treat bytes/string payloads as collisions",
+                        case.name,
+                        variant.name
+                    );
+                    assert!(
+                        !report.uncertain_scopes.is_empty(),
+                        "{} / {} must scope touched bytes/string fields as uncertain",
+                        case.name,
+                        variant.name
+                    );
+                    assert_eq!(
+                        report.uncertain_scopes.len(),
+                        4,
+                        "{} / {} must report each touched bytes/string field once",
+                        case.name,
+                        variant.name
+                    );
+                }
             }
         }
     }

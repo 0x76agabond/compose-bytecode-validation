@@ -156,6 +156,13 @@ impl VslType {
         matches!(self, Self::VirtualStruct)
     }
 
+    pub(crate) fn is_byte_string(&self) -> bool {
+        matches!(
+            self,
+            Self::Scalar { name, .. } if matches!(name.as_str(), "bytes" | "string")
+        )
+    }
+
     pub(crate) fn scalar_width(&self) -> Option<u16> {
         let Self::Scalar { width, .. } = self else {
             return None;
