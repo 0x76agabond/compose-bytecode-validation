@@ -1,4 +1,4 @@
-# Compose Bytecode Validation
+# Compose Bytecode Validator
 
 Compose's Rust bytecode storage validator. It validates a facet's deployed
 runtime bytecode against its Solidity-derived Virtual Storage Layout (VSL).
@@ -223,7 +223,7 @@ Fixture 9 runs against Anvil rather than static fixture bytecode. Its deployed
 graph produces five expected non-blocking delegatecall warnings: calldata,
 transient storage, symbolic target, empty target code, and missing selector.
 
-## Delegatecall Validation
+## Delegatecall Handling
 
 `validate_with_delegate_calls` is an optional extension of the direct-write
 validator. It receives a chain code source and the original diamond/proxy
@@ -341,19 +341,19 @@ Set `FOUNDRY_FORGE` or `FOUNDRY_CAST` when the executables are not on `PATH`.
 ## Architecture
 
 [Architecture.md](./Architecture.md) documents the inherited symbolic-execution
-engine and the Compose validation boundary. The main extension points are:
+engine and the Compose validator boundary. The main extension points are:
 
 - `src/storage/mod.rs`: raw storage evidence before EVMole collapses records;
 - `src/storage_validation/`: active VSL-driven persistent-write validator;
 - `src/compose/`: historical unbiased and VSL-bias comparison experiments;
 - `tools/`: VSL generation from Solidity AST;
 - `tests/fixtures/evmole/`: canonical VSL and incompatible bytecode challenge
-  sources for each validation case.
+  sources for each fixture case.
 
 ## Provenance
 
 This repository began as a fork of
 [EVMole](https://github.com/cdump/evmole) v0.9.3. The EVM interpreter,
 selector/argument recovery, and storage tracer remain the analysis substrate;
-Compose-specific validation is added as a separate host layer. The original
+Compose-specific validator logic is added as a separate host layer. The original
 MIT license is retained in [LICENSE](./LICENSE).

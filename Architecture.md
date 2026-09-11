@@ -1,7 +1,7 @@
-# Compose Bytecode Validation Architecture
+# Compose Bytecode Validator Architecture
 
 This document describes the current Rust architecture of the Compose bytecode
-validation fork. It retains EVMole's symbolic execution engine as its analysis
+validator fork. It retains EVMole's symbolic execution engine as its analysis
 substrate and adds a Compose-specific persistent-write validator.
 
 The engine accepts deployed/runtime EVM bytecode. Creation bytecode is not
@@ -219,7 +219,7 @@ For Compose, the natural integration target is the JavaScript/WASM boundary.
 The CLI should pass structured validation input to a Compose-specific Rust API;
 it should not spawn `cargo` or parse human-readable CLI output.
 
-## Compose Validation Layer
+## Compose Validator Layer
 
 `src/storage_validation/` is the active Compose host. It accepts one facet's
 runtime bytecode plus the canonical full-diamond Virtual Storage Layout (VSL).
@@ -227,7 +227,7 @@ The VSL is a source-side input generated from Solidity's compact AST; it
 contains root identities, physical packing/slot rules, container semantics, and
 virtual child records for structs inside containers.
 
-The public validation entry point is:
+The public validator entry point is:
 
 ```rust
 storage_validation::validate(&StorageValidationInput {
@@ -236,7 +236,7 @@ storage_validation::validate(&StorageValidationInput {
 }) -> StorageValidationReport
 ```
 
-For on-chain delegatecall validation, Compose uses:
+For on-chain delegatecall handling, Compose uses:
 
 ```rust
 storage_validation::validate_with_delegate_calls(
@@ -252,9 +252,9 @@ storage_validation::validate_with_delegate_calls(
 `bytecode` is one facet's deployed runtime bytecode. `virtual_storage_layout`
 is the complete canonical layout that Compose produced for the selected
 diamond. The input deliberately has no fixture name, contract name, or
-case-specific validation mode; those exist only in the research runner.
+case-specific fixture mode; those exist only in the research runner.
 
-The validation layer uses VSL twice, for distinct purposes:
+The validator uses VSL twice, for distinct purposes:
 
 1. `storage_trace_hints()` supplies known persistent scalar and mapping-key
    types to the generic tracer. Hints only improve symbolic recovery; they do
@@ -304,7 +304,7 @@ same transitions. They do not register handling code for individual Solidity
 patterns.
 
 `src/compose/` contains earlier unbiased and VSL-bias experiments. They are
-research comparisons, not part of the active validation verdict.
+research comparisons, not part of the active verdict.
 
 ```mermaid
 flowchart LR
@@ -334,7 +334,7 @@ slot expression and before `finalize_slot_records()` groups and flattens it.
 `src/arguments/mod.rs` remains valuable for recovering calldata type anchors.
 `src/storage_validation/vsl.rs` owns VSL decoding, trace hints, and semantic
 comparison. `src/storage_validation/mod.rs` owns the recursive VSL path walk
-and validation policy. `src/compose/calldata.rs` is a Compose-only calldata
+and verdict policy. `src/compose/calldata.rs` is a Compose-only calldata
 adapter for forwarded delegatecall payloads; it does not alter the generic
 `src/evm/vm.rs` behavior.
 
