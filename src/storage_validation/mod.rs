@@ -41,6 +41,14 @@ struct VslVariableMatch {
     mapping_layers: usize,
     dynamic_array_layers: usize,
     array_strides: Vec<(usize, usize)>,
+    struct_projection: Option<StructProjection>,
+}
+
+#[derive(Clone, Debug)]
+struct StructProjection {
+    container_virtual_path: String,
+    member_slot: usize,
+    member_offset: u8,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -206,13 +214,42 @@ fn validate_layouts(
 ) -> StorageValidationReport {
     let mut report = StorageValidationReport::default();
     collect_byte_string_access_uncertainties(layouts, layout, &mut report);
-    for evidence in best_write_evidence(&layouts.evidence)
+    let write_evidence = best_write_evidence(&layouts.evidence);
+    let supported_projection_groups =
+        structurally_supported_projection_groups(&write_evidence, layout);
+    for evidence in write_evidence
         .into_iter()
         .filter(|evidence| evidence.domain == "persistent")
     {
-        validate_write(evidence, layout, &mut report);
+        validate_write(evidence, layout, &supported_projection_groups, &mut report);
     }
     report
+}
+
+fn structurally_supported_projection_groups(
+    evidence: &[&StorageEvidence],
+    layout: &VirtualStorageLayout,
+) -> BTreeSet<String> {
+    let mut positions = BTreeMap::<String, BTreeSet<(usize, u8)>>::new();
+    for item in evidence
+        .iter()
+        .filter(|item| item.domain == "persistent" && item.value_type_known)
+    {
+        let VslPathMatch::Matched(matched) = match_vsl_variable(item, layout) else {
+            continue;
+        };
+        let Some(projection) = matched.struct_projection else {
+            continue;
+        };
+        positions
+            .entry(projection.container_virtual_path)
+            .or_default()
+            .insert((projection.member_slot, projection.member_offset));
+    }
+    positions
+        .into_iter()
+        .filter_map(|(path, members)| (members.len() >= 2).then_some(path))
+        .collect()
 }
 
 fn collect_byte_string_access_uncertainties(
@@ -517,6 +554,7 @@ fn best_write_evidence(evidence: &[StorageEvidence]) -> Vec<&StorageEvidence> {
 fn validate_write(
     evidence: &StorageEvidence,
     layout: &VirtualStorageLayout,
+    supported_projection_groups: &BTreeSet<String>,
     report: &mut StorageValidationReport,
 ) {
     let Some(slot) = evidence.slot else {
@@ -714,12 +752,19 @@ fn validate_write(
 
     match compare_semantic_types(&observed_type, &expected_type) {
         SemanticCompatibility::Compatible | SemanticCompatibility::KeyMismatch => {
-            report.validated_variables.push(ValidatedVariable {
-                location,
-                virtual_path: matched.virtual_path,
-                expected_type,
-                observed_type,
+            let projection_is_supported = matched.struct_projection.as_ref().is_none_or(|item| {
+                supported_projection_groups.contains(&item.container_virtual_path)
             });
+            if projection_is_supported {
+                report.validated_variables.push(ValidatedVariable {
+                    location,
+                    virtual_path: matched.virtual_path,
+                    expected_type,
+                    observed_type,
+                });
+            } else {
+                push_terminal_projection_uncertainty(report, location, matched.virtual_path);
+            }
         }
         SemanticCompatibility::Contradiction => report.collisions.push(StorageCollision {
             location,
@@ -734,6 +779,26 @@ fn validate_write(
             reason: "bytecode and VSL types cannot be compared conclusively".to_owned(),
         }),
     }
+}
+
+fn push_terminal_projection_uncertainty(
+    report: &mut StorageValidationReport,
+    location: StorageLocation,
+    virtual_path: String,
+) {
+    const REASON: &str = "recovered write matches one VSL struct member, but bytecode does not prove the complete container element shape";
+    if report.uncertain_scopes.iter().any(|scope| {
+        scope.virtual_path.as_deref() == Some(virtual_path.as_str())
+            && scope.location.selector == location.selector
+            && scope.reason == REASON
+    }) {
+        return;
+    }
+    report.uncertain_scopes.push(UncertainStorageScope {
+        location,
+        virtual_path: Some(virtual_path),
+        reason: REASON.to_owned(),
+    });
 }
 
 fn push_byte_string_uncertainty(
@@ -966,7 +1031,7 @@ fn match_recursive_vsl_root(
     {
         return VslPathMatch::NotFound;
     }
-    let matched = if resolved_struct_child {
+    let mut matched = if resolved_struct_child {
         vsl_variable_match(
             record,
             layout,
@@ -985,6 +1050,17 @@ fn match_recursive_vsl_root(
             array_strides,
         )
     };
+
+    if resolved_struct_child
+        && saw_container
+        && let Some(matched) = matched.as_mut()
+    {
+        matched.struct_projection = Some(StructProjection {
+            container_virtual_path: record.virtual_path.clone(),
+            member_slot: slot_index,
+            member_offset: evidence.offset,
+        });
+    }
 
     matched
         .map(VslPathMatch::Matched)
@@ -1106,6 +1182,7 @@ fn vsl_variable_match(
         mapping_layers: container.mapping_layers,
         dynamic_array_layers: container.dynamic_array_layers,
         array_strides,
+        struct_projection: None,
     })
 }
 
@@ -1132,6 +1209,7 @@ fn terminal_vsl_variable_match(
         mapping_layers: container.mapping_layers,
         dynamic_array_layers: container.dynamic_array_layers,
         array_strides,
+        struct_projection: None,
     })
 }
 
@@ -1590,7 +1668,7 @@ mod tests {
         };
         let mut report = StorageValidationReport::default();
 
-        validate_write(&evidence, &layout, &mut report);
+        validate_write(&evidence, &layout, &BTreeSet::new(), &mut report);
 
         assert_eq!(report.collisions.len(), 1);
         assert!(report.uncertain_scopes.is_empty());
@@ -1622,7 +1700,7 @@ mod tests {
         };
         let mut report = StorageValidationReport::default();
 
-        validate_write(&evidence, &layout, &mut report);
+        validate_write(&evidence, &layout, &BTreeSet::new(), &mut report);
 
         assert!(report.collisions.is_empty());
         assert_eq!(report.uncertain_scopes.len(), 1);

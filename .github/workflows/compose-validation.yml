@@ -49,7 +49,12 @@ jobs:
           cargo test --features fixture,rpc
 
       - name: Run storage validation fixtures
-        run: bash ./run-storage-validation.sh 2>&1 | tee storage-validation.log
+        run: |
+          bash ./run-storage-validation.sh 2>&1 | tee storage-validation.log
+          grep -q '^fixture=8.1-string-array-struct-bytes variant=compatible-struct-array-with-data collisions=0 validated=0 uncertain_scopes=2$' storage-validation.log
+          grep -q '^fixture=8.1-string-array-struct-bytes variant=compatible-struct-array-empty collisions=0 validated=0 uncertain_scopes=1$' storage-validation.log
+          grep -q '^fixture=8.1-string-array-struct-bytes variant=incompatible-string-array-with-data collisions=0 validated=0 uncertain_scopes=2$' storage-validation.log
+          grep -q '^fixture=8.1-string-array-struct-bytes variant=incompatible-string-array-empty collisions=0 validated=0 uncertain_scopes=1$' storage-validation.log
 
       - name: Run delegatecall validation fixture
         run: |

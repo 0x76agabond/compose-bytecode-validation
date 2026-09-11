@@ -136,11 +136,13 @@ against the canonical VSL.
 | `2-constant-key` | Constant mapping keys and packed dynamic-array width | VSL anchors constant keys; canonical array writes validate and width mismatch collides. |
 | `3-storage-key` | Storage-derived mapping keys and dynamic/fixed indexes | VSL anchors the loaded `uint64` key; dynamic and fixed packed element mismatches collide. |
 | `4-mapping-struct` | Reordered packed members inside a mapping value | Mapping-value child slots and packed fields validate; reordered members collide. |
-| `5-array-struct` | Packed and multi-slot array structs, reordered members, and adjacent arrays | Canonical child paths validate; reordered fields and an incompatible element stride collide. |
+| `5-array-struct` | Packed and multi-slot array structs, reordered members, scalar projections, and adjacent arrays | Canonical child paths validate; reordered fields and an incompatible element stride collide; a lone matching member is scoped as uncertain. |
+| `5.1-mapping-struct` | Two-member mapping structs, a scalar terminal projection, and reordered members | Two distinct child positions validate or collide; a lone matching member is scoped as uncertain. |
 | `6-array-mapping-struct` | Indexed mapping to an array of packed structs | Canonical indexed writes validate; reordered members collide without uncertainty. |
 | `7-array-mapping-struct-push` | Mapping to an array of packed structs created with `push()`, including a nested dynamic array variant | Recursive paths validate; incompatible nested containers and extra fields collide, with scoped uncertainty where `push()` loses a child boundary. |
-| `final-full-storage` | Full representative VSL: packed primitives, inline structs, mappings, arrays, fixed arrays, struct containers, and independent ERC-8110-style domains | Canonical writes validate across 30 recovered variables; incompatible terminal, nested, and dynamic-key writes collide. |
+| `final-full-storage` | Full representative VSL: packed primitives, inline structs, mappings, arrays, fixed arrays, struct containers, and independent ERC-8110-style domains | Canonical writes validate across 29 recovered variables; incompatible terminal, nested, and dynamic-key writes collide. |
 | `8-bytes-string` | `bytes`, `string`, `bytes[]`, and `string[]` assignment and append flows | Type swaps produce scoped uncertainty rather than false collisions; a proven incompatible container shape still collides. |
+| `8.1-string-array-struct-bytes` | `string[]` versus `struct Node { bytes data; }[]`, with payload writes and empty `push()` | Both layouts have the same observed physical shape; payload and empty variants remain scoped uncertainty rather than false validation or collision. |
 | `9-delegatecall` | Immutable, persistent-storage, calldata, transient, symbolic, empty-code, missing-selector, and nested delegatecall targets | Proven targets recurse against the same VSL; untraceable targets return non-blocking delegatecall warnings. |
 
 An inferred fallback `uint256` cannot prove a collision. The raw tracer marks
@@ -168,19 +170,26 @@ and persistent target addresses from chain state:
 | `5-array-struct` | canonical | 0 | 9 | 0 |
 | `5-array-struct` | incompatible reordered members | 2 | 1 | 0 |
 | `5-array-struct` | incompatible wide reordered members | 2 | 1 | 0 |
-| `5-array-struct` | incompatible address array | 0 | 1 | 0 |
-| `5-array-struct` | adjacent arrays | 1 | 1 | 0 |
+| `5-array-struct` | incompatible address array | 0 | 0 | 1 |
+| `5-array-struct` | adjacent arrays | 1 | 0 | 1 |
+| `5.1-mapping-struct` | canonical two-member struct | 0 | 2 | 0 |
+| `5.1-mapping-struct` | single terminal projection | 0 | 0 | 1 |
+| `5.1-mapping-struct` | reordered two-member struct | 2 | 0 | 0 |
 | `6-array-mapping-struct` | canonical indexed mapping-array-struct | 0 | 3 | 0 |
 | `6-array-mapping-struct` | incompatible indexed member order | 3 | 0 | 0 |
 | `7-array-mapping-struct-push` | canonical mapping-array-struct | 0 | 4 | 0 |
 | `7-array-mapping-struct-push` | incompatible mapping array struct | 1 | 1 | 1 |
 | `7-array-mapping-struct-push` | incompatible mapping array and fields | 3 | 1 | 1 |
-| `final-full-storage` | canonical full storage | 0 | 30 | 2 |
+| `final-full-storage` | canonical full storage | 0 | 29 | 3 |
 | `final-full-storage` | compatible prefix storage | 0 | 1 | 0 |
 | `final-full-storage` | incompatible full storage | 12 | 4 | 3 |
 | `8-bytes-string` | canonical bytes and string | 0 | 2 | 4 |
 | `8-bytes-string` | swapped bytes/string types | 0 | 2 | 4 |
 | `8-bytes-string` | incompatible outer container shape | 2 | 0 | 0 |
+| `8.1-string-array-struct-bytes` | compatible struct array with payload | 0 | 0 | 2 |
+| `8.1-string-array-struct-bytes` | compatible struct array empty push | 0 | 0 | 1 |
+| `8.1-string-array-struct-bytes` | incompatible string array with payload | 0 | 0 | 2 |
+| `8.1-string-array-struct-bytes` | incompatible string array empty push | 0 | 0 | 1 |
 | `9-delegatecall` | deployed diamond target graph | 1 | 4 | 0 |
 
 All variants currently complete without an unresolved-root diagnostic. The
@@ -205,10 +214,10 @@ domain and appends four ERC-8110-style independent domains:
 `terminal.v1`, `nested.v1`, `dynamic-keys.v1`, and `dynamic-data.v1`. They
 exercise terminal struct-member ambiguity, mapping-to-dynamic-array-to-struct
 paths, dynamic `bytes`/`string` mapping keys, and dynamic `bytes`/`string`
-value writes. A source type difference is not itself a collision: writing
-`uint256` through `mapping(uint256 => uint256)` is accepted when it targets the
-canonical `Node.amount` member, while an `address` write at that same position
-is a collision.
+value writes. A source type difference is not itself a collision. A lone
+`uint256` write that targets the canonical `Node.amount` member is scoped as
+uncertain because it cannot prove whether the bytecode models a scalar or a
+struct value. An `address` write at that same position is a collision.
 
 Fixture 9 runs against Anvil rather than static fixture bytecode. Its deployed
 graph produces five expected non-blocking delegatecall warnings: calldata,
@@ -256,6 +265,12 @@ scoped uncertainty because bytecode cannot distinguish the source-level type.
 For `bytes[]` and `string[]`, the outer array header can still validate while
 each element and its payload remain uncertain. A proven incompatible outer
 container or root shape is still reported as a collision.
+
+The same ambiguity extends to `string[]` and a one-member
+`struct { bytes data; }[]`: both use a one-slot array element whose payload has
+the same bytes/string encoding. Payload writes and empty `push()` operations
+therefore remain scoped uncertainty unless another recovered member proves a
+different struct shape.
 
 ### `push()` Child Boundaries
 

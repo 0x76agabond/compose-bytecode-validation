@@ -15,7 +15,9 @@ enum Expectation {
     Collision,
     CollisionOrUncertain,
     CompatibleEvidence,
+    TerminalProjectionUncertainty,
     ByteStringUncertainty,
+    ScopedUncertainty(usize),
 }
 
 struct Case {
@@ -141,12 +143,38 @@ const CASES: &[Case] = &[
                 name: "incompatible-address-array",
                 source: "IncompatibleAddress.sol",
                 contract: "Case5IncompatibleAddress",
-                expectation: Expectation::CompatibleEvidence,
+                expectation: Expectation::TerminalProjectionUncertainty,
             },
             Variant {
                 name: "adjacent-arrays",
                 source: "AdjacentArrays.sol",
                 contract: "Case5AdjacentArrays",
+                expectation: Expectation::Collision,
+            },
+        ],
+    },
+    Case {
+        name: "5.1-mapping-struct",
+        directory: "5.1-mapping-struct",
+        minimum_canonical_validated: 2,
+        maximum_canonical_uncertain: 0,
+        variants: &[
+            Variant {
+                name: "canonical-two-members",
+                source: "Canonical.sol",
+                contract: "Case51Canonical",
+                expectation: Expectation::Canonical,
+            },
+            Variant {
+                name: "single-terminal-projection",
+                source: "TerminalProjection.sol",
+                contract: "Case51TerminalProjection",
+                expectation: Expectation::TerminalProjectionUncertainty,
+            },
+            Variant {
+                name: "reordered-two-members",
+                source: "Reordered.sol",
+                contract: "Case51Reordered",
                 expectation: Expectation::Collision,
             },
         ],
@@ -200,8 +228,8 @@ const CASES: &[Case] = &[
     Case {
         name: "final-full-storage",
         directory: "final-full-storage",
-        minimum_canonical_validated: 30,
-        maximum_canonical_uncertain: 2,
+        minimum_canonical_validated: 29,
+        maximum_canonical_uncertain: 3,
         variants: &[
             Variant {
                 name: "canonical-full-storage",
@@ -246,6 +274,38 @@ const CASES: &[Case] = &[
                 source: "IncompatibleContainer.sol",
                 contract: "Case8IncompatibleContainer",
                 expectation: Expectation::Collision,
+            },
+        ],
+    },
+    Case {
+        name: "8.1-string-array-struct-bytes",
+        directory: "8.1-string-array-struct-bytes",
+        minimum_canonical_validated: 0,
+        maximum_canonical_uncertain: usize::MAX,
+        variants: &[
+            Variant {
+                name: "compatible-struct-array-with-data",
+                source: "Canonical.sol",
+                contract: "Case81CanonicalWithData",
+                expectation: Expectation::ScopedUncertainty(2),
+            },
+            Variant {
+                name: "compatible-struct-array-empty",
+                source: "CompatibleEmpty.sol",
+                contract: "Case81CompatibleEmpty",
+                expectation: Expectation::ScopedUncertainty(1),
+            },
+            Variant {
+                name: "incompatible-string-array-with-data",
+                source: "IncompatibleWithData.sol",
+                contract: "Case81IncompatibleStringWithData",
+                expectation: Expectation::ScopedUncertainty(2),
+            },
+            Variant {
+                name: "incompatible-string-array-empty",
+                source: "IncompatibleEmpty.sol",
+                contract: "Case81IncompatibleStringEmpty",
+                expectation: Expectation::ScopedUncertainty(1),
             },
         ],
     },
@@ -304,6 +364,14 @@ fn main() {
                 virtual_storage_layout: virtual_storage_layout.clone(),
             });
             println!("{report}");
+            println!(
+                "fixture={} variant={} collisions={} validated={} uncertain_scopes={}",
+                case.name,
+                variant.name,
+                report.collisions.len(),
+                report.validated_variables.len(),
+                report.uncertain_scopes.len()
+            );
 
             match variant.expectation {
                 Expectation::Canonical => {
@@ -349,6 +417,27 @@ fn main() {
                         variant.name
                     );
                 }
+                Expectation::TerminalProjectionUncertainty => {
+                    assert!(
+                        report.collisions.is_empty(),
+                        "{} / {} must not treat a matching terminal projection as a collision",
+                        case.name,
+                        variant.name
+                    );
+                    assert!(
+                        report.validated_variables.is_empty(),
+                        "{} / {} must not validate an uncorroborated terminal projection",
+                        case.name,
+                        variant.name
+                    );
+                    assert_eq!(
+                        report.uncertain_scopes.len(),
+                        1,
+                        "{} / {} must scope the terminal projection once",
+                        case.name,
+                        variant.name
+                    );
+                }
                 Expectation::ByteStringUncertainty => {
                     assert!(
                         report.collisions.is_empty(),
@@ -366,6 +455,27 @@ fn main() {
                         report.uncertain_scopes.len(),
                         4,
                         "{} / {} must report each touched bytes/string field once",
+                        case.name,
+                        variant.name
+                    );
+                }
+                Expectation::ScopedUncertainty(expected_count) => {
+                    assert!(
+                        report.collisions.is_empty(),
+                        "{} / {} must not turn an indistinguishable storage shape into a collision",
+                        case.name,
+                        variant.name
+                    );
+                    assert!(
+                        report.validated_variables.is_empty(),
+                        "{} / {} must not validate an indistinguishable storage shape",
+                        case.name,
+                        variant.name
+                    );
+                    assert_eq!(
+                        report.uncertain_scopes.len(),
+                        expected_count,
+                        "{} / {} has an unexpected uncertainty scope count",
                         case.name,
                         variant.name
                     );

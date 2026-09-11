@@ -1,0 +1,55 @@
+{
+  "records": [
+    {
+      "id": "0x7bf30f74af58d6e1de4cdb40aa21b5184af3bc27232bba615a8055adced13f4d",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf2",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf2",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ]
+      ],
+      "source": "erc8042",
+      "sourceName": "Canonical.sol",
+      "contractName": "Case81CanonicalWithData",
+      "structName": "Storage",
+      "virtualPath": "compose.validation.case8-1.string-array-struct-bytes",
+      "parentVirtualPath": null,
+      "diamondName": null
+    },
+    {
+      "id": "0xadbf6f3578d812a61f43c1ea7240d503ed4759474f90b0dfd5a7ed09eb125b71",
+      "parentPath": "compose.validation.case8-1.string-array-struct-bytes",
+      "kind": "immutable",
+      "codeWidth": 1,
+      "layout": [
+        "0x72"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0x72"
+      ],
+      "slots": [
+        [
+          256
+        ]
+      ],
+      "source": "erc8042",
+      "sourceName": "Canonical.sol",
+      "contractName": "Case81CanonicalWithData",
+      "structName": "Storage",
+      "virtualPath": "compose.validation.case8-1.string-array-struct-bytes.0",
+      "parentVirtualPath": "compose.validation.case8-1.string-array-struct-bytes",
+      "diamondName": null
+    }
+  ]
+}

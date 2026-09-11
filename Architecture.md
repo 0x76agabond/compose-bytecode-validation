@@ -293,6 +293,11 @@ The matcher has generic transition rules rather than fixture rules:
    element schema and, when available, its recovered stride.
 4. Entering a virtual struct moves to its child record, whose physical slot and
    packing table select the final field.
+5. One compatible terminal member beneath a mapping or array does not prove the
+   complete element shape. It remains scoped uncertainty until recovered writes
+   cover at least two distinct `(member slot, packed offset)` positions under
+   the same virtual struct child. Clear type, width, or path contradictions are
+   still collisions with only one recovered member.
 
 Fixtures supply different bytecode and canonical VSL inputs to challenge these
 same transitions. They do not register handling code for individual Solidity
@@ -336,10 +341,11 @@ adapter for forwarded delegatecall payloads; it does not alter the generic
 The Compose matcher belongs above the generic engine and owns policy:
 
 ```text
-proven root/path/container/bit-range/type contradiction -> collision
-known storage location with unresolved type/path        -> scoped uncertainty
-unresolved storage root                                 -> diagnostic
-recovered evidence compatible with VSL                  -> validated variable
+proven root/path/container/bit-range/type contradiction  -> collision
+known storage location with unresolved type/path         -> scoped uncertainty
+lone compatible struct projection under a container      -> scoped uncertainty
+unresolved storage root                                  -> diagnostic
+compatible evidence with sufficient structural support  -> validated variable
 ```
 
 Delegatecall policy is intentionally narrower:
