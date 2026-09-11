@@ -144,6 +144,7 @@ against the canonical VSL.
 | `8-bytes-string` | `bytes`, `string`, `bytes[]`, and `string[]` assignment and append flows | Type swaps produce scoped uncertainty rather than false collisions; a proven incompatible container shape still collides. |
 | `8.1-string-array-struct-bytes` | `string[]` versus `struct Node { bytes data; }[]`, with payload writes and empty `push()` | Both layouts have the same observed physical shape; payload and empty variants remain scoped uncertainty rather than false validation or collision. |
 | `9-delegatecall` | Immutable, persistent-storage, calldata, transient, symbolic, empty-code, missing-selector, and nested delegatecall targets | Proven targets recurse against the same VSL; untraceable targets return non-blocking delegatecall warnings. |
+| `10-total-assembly` | Inline-assembly writes to direct slots, packed fields, a mapping, a dynamic array, and a caller-provided raw slot | Known roots and manual `KECCAK256` paths validate; type-width mismatches collide; raw or composite writes stay scoped uncertainty. |
 
 An inferred fallback `uint256` cannot prove a collision. The raw tracer marks
 whether the write value type was actually recovered; fallback values are
@@ -191,6 +192,8 @@ and persistent target addresses from chain state:
 | `8.1-string-array-struct-bytes` | incompatible string array with payload | 0 | 0 | 2 |
 | `8.1-string-array-struct-bytes` | incompatible string array empty push | 0 | 0 | 1 |
 | `9-delegatecall` | deployed diamond target graph | 1 | 4 | 0 |
+| `10-total-assembly` | canonical inline assembly | 0 | 4 | 2 |
+| `10-total-assembly` | incompatible inline assembly | 2 | 2 | 2 |
 
 All variants currently complete without an unresolved-root diagnostic. The
 engine reliably tracks root slots, static slot shifts, selectors, program
@@ -277,6 +280,15 @@ different struct shape.
 For some nested dynamic-array `push()` paths, the tracer loses an element child
 boundary. It reports a scoped uncertainty for the affected array-length write;
 independently recovered member writes still validate or collide normally.
+
+### Inline Assembly
+
+Assembly has no source-level marker in deployed bytecode; the validator checks
+the recovered `SSTORE` behavior itself. Direct slots and manual
+mapping/array `KECCAK256` paths are compared against the VSL normally. A raw
+caller-provided slot, or a packed composite value whose individual member type
+cannot be recovered, is reported as scoped uncertainty rather than a false
+safe result.
 
 ### Delegatecall Target Sources
 

@@ -309,6 +309,26 @@ const CASES: &[Case] = &[
             },
         ],
     },
+    Case {
+        name: "10-total-assembly",
+        directory: "10-total-assembly",
+        minimum_canonical_validated: 4,
+        maximum_canonical_uncertain: 2,
+        variants: &[
+            Variant {
+                name: "canonical-assembly",
+                source: "Canonical.sol",
+                contract: "Case10AssemblyCanonical",
+                expectation: Expectation::Canonical,
+            },
+            Variant {
+                name: "incompatible-assembly",
+                source: "Incompatible.sol",
+                contract: "Case10AssemblyIncompatible",
+                expectation: Expectation::Collision,
+            },
+        ],
+    },
 ];
 
 fn decode_hex(value: &str) -> Vec<u8> {
