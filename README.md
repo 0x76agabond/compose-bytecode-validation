@@ -145,6 +145,7 @@ against the canonical VSL.
 | `8.1-string-array-struct-bytes` | `string[]` versus `struct Node { bytes data; }[]`, with payload writes and empty `push()` | Both layouts have the same observed physical shape; payload and empty variants remain scoped uncertainty rather than false validation or collision. |
 | `9-delegatecall` | Immutable, persistent-storage, calldata, transient, symbolic, empty-code, missing-selector, and nested delegatecall targets | Proven targets recurse against the same VSL; untraceable targets return non-blocking delegatecall warnings. |
 | `10-total-assembly` | Inline-assembly writes to direct slots, packed fields, a mapping, a dynamic array, and a caller-provided raw slot | Known roots and manual `KECCAK256` paths validate; type-width mismatches collide; raw or composite writes stay scoped uncertainty. |
+| `11-solady-erc721` | Solady-style ERC721 ownership and balance slots derived from a custom seed and offset formula | The non-Solidity coordinate is reported as scoped uncertainty instead of a false validation or collision. |
 
 An inferred fallback `uint256` cannot prove a collision. The raw tracer marks
 whether the write value type was actually recovered; fallback values are
@@ -194,10 +195,14 @@ and persistent target addresses from chain state:
 | `9-delegatecall` | deployed diamond target graph | 1 | 4 | 0 |
 | `10-total-assembly` | canonical inline assembly | 0 | 4 | 2 |
 | `10-total-assembly` | incompatible inline assembly | 2 | 2 | 2 |
+| `11-solady-erc721` | canonical custom coordinate | 0 | 0 | 1 |
+| `11-solady-erc721` | incompatible packed order | 0 | 0 | 1 |
 
-All variants currently complete without an unresolved-root diagnostic. The
-engine reliably tracks root slots, static slot shifts, selectors, program
-counters, constant mapping keys, and storage-derived mapping keys.
+The standard Solidity-coordinate variants complete without an unresolved-root
+diagnostic. The engine reliably tracks root slots, static slot shifts,
+selectors, program counters, constant mapping keys, and storage-derived
+mapping keys. Fixture 11 deliberately uses a non-standard coordinate and is
+therefore reported as an unresolved, scoped uncertainty.
 
 VSL-derived trace hints now recover mapping key types for constant and
 storage-loaded keys. Packed read-modify-write values retain their ABI type
@@ -241,6 +246,16 @@ The packed composite and raw-slot writes remain reference evidence only. EVMole
 materializes static calldata arguments with a zero-valued placeholder, so a raw
 `bytes32 slot` argument can be displayed as `0x00`; this is not a claim about
 the slot supplied at runtime.
+
+### Fixture 11: Solady-Style Custom Coordinates
+
+Fixture 11 reproduces the custom ERC721 ownership and balance coordinate style
+used by [Solady's ERC721 implementation](https://github.com/Vectorized/solady/blob/main/src/tokens/ERC721.sol): a short seed is combined with an id or address,
+then the ownership location adds the id twice to the resulting hash. This is not
+the canonical Solidity `keccak256(key . mappingSlot)` mapping path represented
+by VSL. Both the canonical and reordered packed-write variants therefore return
+one scoped uncertainty. The validator makes no claim that either variant is
+safe, and it does not manufacture a collision from an unproved coordinate.
 
 ## Delegatecall Handling
 

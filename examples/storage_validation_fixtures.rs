@@ -329,6 +329,26 @@ const CASES: &[Case] = &[
             },
         ],
     },
+    Case {
+        name: "11-solady-erc721",
+        directory: "11-solady-erc721",
+        minimum_canonical_validated: 0,
+        maximum_canonical_uncertain: 1,
+        variants: &[
+            Variant {
+                name: "canonical-solady-coordinate",
+                source: "Canonical.sol",
+                contract: "Case11SoladyCanonical",
+                expectation: Expectation::ScopedUncertainty(1),
+            },
+            Variant {
+                name: "incompatible-solady-packed-order",
+                source: "Incompatible.sol",
+                contract: "Case11SoladyIncompatible",
+                expectation: Expectation::ScopedUncertainty(1),
+            },
+        ],
+    },
 ];
 
 fn decode_hex(value: &str) -> Vec<u8> {

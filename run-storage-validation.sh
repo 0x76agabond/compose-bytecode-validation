@@ -22,6 +22,7 @@ forge build \
   "$fixture_root/8-bytes-string" \
   "$fixture_root/8.1-string-array-struct-bytes" \
   "$fixture_root/10-total-assembly" \
+  "$fixture_root/11-solady-erc721" \
   "$fixture_root/final-full-storage"
 
 cargo run --features fixture --example storage_validation_fixtures
