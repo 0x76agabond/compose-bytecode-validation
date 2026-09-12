@@ -8,7 +8,7 @@ reconstruct a complete contract layout from bytecode. Compose already has a
 stronger source-side model: the VSL knows declared types, packing, container
 boundaries, and named storage roots. This project asks a narrower question:
 
-> Does bytecode storage evidence clearly contradict the selected facet's VSL?
+> Does this facet's bytecode storage evidence clearly contradict the full diamond VSL?
 
 ## Virtual Storage Layout
 
