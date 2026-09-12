@@ -57,8 +57,8 @@ jobs:
           grep -q '^fixture=8.1-string-array-struct-bytes variant=incompatible-string-array-empty collisions=0 validated=0 uncertain_scopes=1$' storage-validation.log
           grep -q '^fixture=10-total-assembly variant=canonical-assembly collisions=0 validated=4 uncertain_scopes=2$' storage-validation.log
           grep -q '^fixture=10-total-assembly variant=incompatible-assembly collisions=2 validated=2 uncertain_scopes=2$' storage-validation.log
-          grep -q '^fixture=11-solady-erc721 variant=canonical-solady-coordinate collisions=0 validated=0 uncertain_scopes=1$' storage-validation.log
-          grep -q '^fixture=11-solady-erc721 variant=incompatible-solady-packed-order collisions=0 validated=0 uncertain_scopes=1$' storage-validation.log
+          grep -q '^fixture=11-solady-erc721 variant=canonical-solady-coordinate collisions=0 validated=0 uncertain_scopes=2$' storage-validation.log
+          grep -q '^fixture=11-solady-erc721 variant=incompatible-solady-packed-order collisions=0 validated=0 uncertain_scopes=2$' storage-validation.log
 
       - name: Run delegatecall validation fixture
         run: |

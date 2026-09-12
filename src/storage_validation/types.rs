@@ -252,6 +252,13 @@ impl fmt::Display for StorageValidationReport {
                 scope.reason,
             )?;
         }
+        for diagnostic in &self.diagnostics {
+            writeln!(
+                f,
+                "  diagnostic selector={} pc={:?} path={} reason={}",
+                diagnostic.selector, diagnostic.pc, diagnostic.symbolic_path, diagnostic.message,
+            )?;
+        }
         for warning in &self.delegatecall_warnings {
             writeln!(
                 f,

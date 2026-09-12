@@ -21,11 +21,11 @@ virtual struct child that occupies each position.
 The layout is a small recursive token stream:
 
 - `0x01..0x73`: one byte per scalar type, for example `0x01` is `bool` and
-  `0x03` is `address`;
-- `0xf1`: mapping;
-- `0xf2`: dynamic array;
-- `0xf3`: fixed array;
-- `0xf4`: struct;
+  `0x03` is `address`,
+- `0xf1`: mapping,
+- `0xf2`: dynamic array,
+- `0xf3`: fixed array,
+- `0xf4`: struct,
 - `0xff`: end of the current container.
 
 For example, this Solidity shape:
@@ -58,21 +58,21 @@ address bytes4 bytes8
 
 Here `0xf2 0xff` means the dynamic-array element is a virtual child rather
 than an inline type. `0xf2` is already the mapping value, so that one `0xff`
-finishes the array branch and the mapping is complete too; it does not close an
+finishes the array branch and the mapping is complete too, it does not close an
 unrelated outer struct. The separate child record preserves the struct schema
 and physical span.
 
 It preserves the Solidity rules that matter for bytecode validation:
 
 - declaration order, slot boundaries, byte packing, and fixed-array physical
-  span;
+  span,
 - semantic boundaries for structs, mappings, and dynamic arrays, including
-  virtual child records for structs inside containers; and
+  virtual child records for structs inside containers, and
 - declared scalar type and width at every comparable slot and byte offset.
 
 That gives the validator a complete expected storage map for the diamond rather
 than asking a decompiler to rediscover one from every facet in isolation. VSL
-does not prove that bytecode reaches every path or interpret arbitrary assembly;
+does not prove that bytecode reaches every path or interpret arbitrary assembly,
 it supplies the expected coordinate system and the type/packing constraints
 against which recovered persistent writes are challenged.
 
@@ -80,8 +80,8 @@ against which recovered persistent writes are challenged.
 
 Each validation run consumes:
 
-- a facet's runtime bytecode;
-- VSL records generated from the Solidity compact AST; and
+- a facet's runtime bytecode,
+- VSL records generated from the Solidity compact AST, and
 - concrete root slots derived from the VSL namespaces.
 
 The validator traces persistent `SSTORE` operations and compares concrete
@@ -106,20 +106,20 @@ This fork keeps EVMole's interpreter, CFG, ABI argument recovery, and symbolic
 storage tracer as the analysis substrate, then adds a Compose-specific layer:
 
 - it accepts the canonical full-diamond VSL as an external input rather than
-  inferring the entire source layout from bytecode;
+  inferring the entire source layout from bytecode,
 - it retains `SSTORE` evidence needed for contradiction checks, including
   persistent root slot, constant mapping-value slot delta, packed byte offset,
-  field width, selector, and program counter;
+  field width, selector, and program counter,
 - it compares only concrete writes against declared VSL variables and returns
   a proven collision, validation, scoped uncertainty, or unresolved-root
-  diagnostic; and
+  diagnostic, and
 - it preserves generic-decompiler uncertainty instead of letting VSL turn an
   ambiguous bytecode trace into a safe verdict.
 
 The scope is deliberately narrower than a complete decompiler: the validator
 tries to prove a bytecode/VSL contradiction, not reconstruct every storage
 variable that a facet could access. Mapping key-type differences are diagnostic
-only; value shape, container shape, byte width, packing offset, and root slot
+only, value shape, container shape, byte width, packing offset, and root slot
 identity are storage compatibility evidence.
 
 ## Fixture Coverage
@@ -132,130 +132,190 @@ against the canonical VSL.
 
 | Fixture | Challenge | Current evidence |
 | --- | --- | --- |
-| `1-normal` | Packed nested-struct width shifts | Canonical writes validate; incompatible slot shifts produce collisions. |
-| `2-constant-key` | Constant mapping keys and packed dynamic-array width | VSL anchors constant keys; canonical array writes validate and width mismatch collides. |
-| `3-storage-key` | Storage-derived mapping keys and dynamic/fixed indexes | VSL anchors the loaded `uint64` key; dynamic and fixed packed element mismatches collide. |
-| `4-mapping-struct` | Reordered packed members inside a mapping value | Mapping-value child slots and packed fields validate; reordered members collide. |
-| `5-array-struct` | Packed and multi-slot array structs, reordered members, scalar projections, and adjacent arrays | Canonical child paths validate; reordered fields and an incompatible element stride collide; a lone matching member is scoped as uncertain. |
-| `5.1-mapping-struct` | Two-member mapping structs, a scalar terminal projection, and reordered members | Two distinct child positions validate or collide; a lone matching member is scoped as uncertain. |
-| `6-array-mapping-struct` | Indexed mapping to an array of packed structs | Canonical indexed writes validate; reordered members collide without uncertainty. |
-| `7-array-mapping-struct-push` | Mapping to an array of packed structs created with `push()`, including a nested dynamic array variant | Recursive paths validate; incompatible nested containers and extra fields collide, with scoped uncertainty where `push()` loses a child boundary. |
-| `final-full-storage` | Full representative VSL: packed primitives, inline structs, mappings, arrays, fixed arrays, struct containers, and independent ERC-8110-style domains | Canonical writes validate across 29 recovered variables; incompatible terminal, nested, and dynamic-key writes collide. |
-| `8-bytes-string` | `bytes`, `string`, `bytes[]`, and `string[]` assignment and append flows | Type swaps produce scoped uncertainty rather than false collisions; a proven incompatible container shape still collides. |
-| `8.1-string-array-struct-bytes` | `string[]` versus `struct Node { bytes data; }[]`, with payload writes and empty `push()` | Both layouts have the same observed physical shape; payload and empty variants remain scoped uncertainty rather than false validation or collision. |
-| `9-delegatecall` | Immutable, persistent-storage, calldata, transient, symbolic, empty-code, missing-selector, and nested delegatecall targets | Proven targets recurse against the same VSL; untraceable targets return non-blocking delegatecall warnings. |
-| `10-total-assembly` | Inline-assembly writes to direct slots, packed fields, a mapping, a dynamic array, and a caller-provided raw slot | Known roots and manual `KECCAK256` paths validate; type-width mismatches collide; raw or composite writes stay scoped uncertainty. |
-| `11-solady-erc721` | Solady-style ERC721 ownership and balance slots derived from a custom seed and offset formula | The non-Solidity coordinate is reported as scoped uncertainty instead of a false validation or collision. |
+| `1-normal` | Packed nested-struct width shifts | Canonical writes validate, incompatible slot shifts produce collisions. |
+| `2-constant-key` | Constant mapping keys and packed dynamic-array width | VSL anchors constant keys, canonical array writes validate and width mismatch collides. |
+| `3-storage-key` | Storage-derived mapping keys and dynamic/fixed indexes | VSL anchors the loaded `uint64` key, dynamic and fixed packed element mismatches collide. |
+| `4-mapping-struct` | Reordered packed members inside a mapping value | Mapping-value child slots and packed fields validate, reordered members collide. |
+| `5-array-struct` | Packed and multi-slot array structs, reordered members, scalar projections, and adjacent arrays | Canonical child paths validate, reordered fields and an incompatible element stride collide, a lone matching member is scoped as uncertain. |
+| `5.1-mapping-struct` | Two-member mapping structs, a scalar terminal projection, and reordered members | Two distinct child positions validate or collide, a lone matching member is scoped as uncertain. |
+| `6-array-mapping-struct` | Indexed mapping to an array of packed structs | Canonical indexed writes validate, reordered members collide without uncertainty. |
+| `7-array-mapping-struct-push` | Mapping to an array of packed structs created with `push()`, including a nested dynamic array variant | Recursive paths validate, incompatible nested containers and extra fields collide, with scoped uncertainty where `push()` loses a child boundary. |
+| `final-full-storage` | Full representative VSL: packed primitives, inline structs, mappings, arrays, fixed arrays, struct containers, and independent ERC-8110-style domains | Canonical writes validate across 29 recovered variables, incompatible terminal, nested, and dynamic-key writes collide. |
+| `8-bytes-string` | `bytes`, `string`, `bytes[]`, and `string[]` assignment and append flows | Type swaps produce scoped uncertainty rather than false collisions, a proven incompatible container shape still collides. |
+| `8.1-string-array-struct-bytes` | `string[]` versus an array of structs with a `bytes data` field, with payload writes and empty `push()` | Both layouts have the same observed physical shape, payload and empty variants remain scoped uncertainty rather than false validation or collision. |
+| `9-delegatecall` | Immutable, persistent-storage, calldata, transient, symbolic, empty-code, missing-selector, and nested delegatecall targets | Proven targets recurse against the same VSL, untraceable targets return non-blocking delegatecall warnings. |
+| `10-total-assembly` | Inline-assembly writes to direct slots, packed fields, a mapping, a dynamic array, and a caller-provided raw slot | Known roots and manual `KECCAK256` paths validate, type-width mismatches collide, raw or composite writes stay scoped uncertainty. |
+| `11-solady-erc721` | Solady-style ownership, balance/aux, and operator-approval coordinates across three ERC-8110 domains | Four custom writes remain unresolved evidence rather than false validation or collision. |
 
 An inferred fallback `uint256` cannot prove a collision. The raw tracer marks
-whether the write value type was actually recovered; fallback values are
+whether the write value type was actually recovered, fallback values are
 reported only as scoped uncertainty. Dynamic-array length writes are compared
 as container metadata rather than as element writes.
 
 ### Current Result Snapshot
 
-The storage assertion runner covers the direct-write fixture variants below.
-`9-delegatecall` has its own Anvil-backed runner because it fetches target code
-and persistent target addresses from chain state:
+#### Fixture 1: Normal
 
-| Fixture | Variant | Collisions | Validated | Scoped uncertainty |
-| --- | --- | ---: | ---: | ---: |
-| `1-normal` | canonical | 0 | 11 | 0 |
-| `1-normal` | incompatible packed width | 2 | 3 | 0 |
-| `2-constant-key` | canonical | 0 | 4 | 0 |
-| `2-constant-key` | incompatible dynamic width | 1 | 3 | 0 |
-| `3-storage-key` | canonical | 0 | 8 | 0 |
-| `3-storage-key` | incompatible dynamic width | 2 | 0 | 0 |
-| `3-storage-key` | incompatible fixed width | 2 | 0 | 0 |
-| `4-mapping-struct` | canonical | 0 | 5 | 0 |
-| `4-mapping-struct` | incompatible reordered members | 2 | 3 | 0 |
-| `5-array-struct` | canonical | 0 | 9 | 0 |
-| `5-array-struct` | incompatible reordered members | 2 | 1 | 0 |
-| `5-array-struct` | incompatible wide reordered members | 2 | 1 | 0 |
-| `5-array-struct` | incompatible address array | 0 | 0 | 1 |
-| `5-array-struct` | adjacent arrays | 1 | 0 | 1 |
-| `5.1-mapping-struct` | canonical two-member struct | 0 | 2 | 0 |
-| `5.1-mapping-struct` | single terminal projection | 0 | 0 | 1 |
-| `5.1-mapping-struct` | reordered two-member struct | 2 | 0 | 0 |
-| `6-array-mapping-struct` | canonical indexed mapping-array-struct | 0 | 3 | 0 |
-| `6-array-mapping-struct` | incompatible indexed member order | 3 | 0 | 0 |
-| `7-array-mapping-struct-push` | canonical mapping-array-struct | 0 | 4 | 0 |
-| `7-array-mapping-struct-push` | incompatible mapping array struct | 1 | 1 | 1 |
-| `7-array-mapping-struct-push` | incompatible mapping array and fields | 3 | 1 | 1 |
-| `final-full-storage` | canonical full storage | 0 | 29 | 3 |
-| `final-full-storage` | compatible prefix storage | 0 | 1 | 0 |
-| `final-full-storage` | incompatible full storage | 12 | 4 | 3 |
-| `8-bytes-string` | canonical bytes and string | 0 | 2 | 4 |
-| `8-bytes-string` | swapped bytes/string types | 0 | 2 | 4 |
-| `8-bytes-string` | incompatible outer container shape | 2 | 0 | 0 |
-| `8.1-string-array-struct-bytes` | compatible struct array with payload | 0 | 0 | 2 |
-| `8.1-string-array-struct-bytes` | compatible struct array empty push | 0 | 0 | 1 |
-| `8.1-string-array-struct-bytes` | incompatible string array with payload | 0 | 0 | 2 |
-| `8.1-string-array-struct-bytes` | incompatible string array empty push | 0 | 0 | 1 |
-| `9-delegatecall` | deployed diamond target graph | 1 | 4 | 0 |
-| `10-total-assembly` | canonical inline assembly | 0 | 4 | 2 |
-| `10-total-assembly` | incompatible inline assembly | 2 | 2 | 2 |
-| `11-solady-erc721` | canonical custom coordinate | 0 | 0 | 1 |
-| `11-solady-erc721` | incompatible packed order | 0 | 0 | 1 |
+| Variant | Collisions | Validated | Uncertain |
+| --- | ---: | ---: | ---: |
+| Canonical | 0 | 11 | 0 |
+| Packed-width mismatch | 2 | 3 | 0 |
 
-The standard Solidity-coordinate variants complete without an unresolved-root
-diagnostic. The engine reliably tracks root slots, static slot shifts,
-selectors, program counters, constant mapping keys, and storage-derived
-mapping keys. Fixture 11 deliberately uses a non-standard coordinate and is
-therefore reported as an unresolved, scoped uncertainty.
+**Characteristics:** Direct roots, packed fields, fixed slots, and packed dynamic arrays.
 
-VSL-derived trace hints now recover mapping key types for constant and
-storage-loaded keys. Packed read-modify-write values retain their ABI type
-through dynamic index shifting, including Solidity's boolean normalization.
+**Conclusion:** High confidence for direct Solidity slots and packing, no conclusion beyond recovered writes.
 
-Mapping-value structs retain constant child-slot deltas from `KECCAK256 +
-constant` and packed write masks. The storage tracer also preserves ordered
-path segments for mappings, dynamic arrays, and slot offsets. The validator
-walks those segments recursively through VSL virtual struct children, so cases
-4 through 7 use the same path-matching mechanism rather than case-specific
-rules. This validates packed and multi-slot array-struct members, detects
-element-stride contradictions, and detects nested dynamic containers or fields
-that exceed the canonical child struct span.
+#### Fixture 2: Constant Key
 
-The full-storage fixture keeps its original `compose.fixture.virtual-storage`
-domain and appends four ERC-8110-style independent domains:
-`terminal.v1`, `nested.v1`, `dynamic-keys.v1`, and `dynamic-data.v1`. They
-exercise terminal struct-member ambiguity, mapping-to-dynamic-array-to-struct
-paths, dynamic `bytes`/`string` mapping keys, and dynamic `bytes`/`string`
-value writes. A source type difference is not itself a collision. A lone
-`uint256` write that targets the canonical `Node.amount` member is scoped as
-uncertain because it cannot prove whether the bytecode models a scalar or a
-struct value. An `address` write at that same position is a collision.
+| Variant | Collisions | Validated | Uncertain |
+| --- | ---: | ---: | ---: |
+| Canonical | 0 | 4 | 0 |
+| Widened dynamic element | 1 | 3 | 0 |
 
-Fixture 9 runs against Anvil rather than static fixture bytecode. Its deployed
-graph produces five expected non-blocking delegatecall warnings: calldata,
-transient storage, symbolic target, empty target code, and missing selector.
+**Characteristics:** Constant mapping keys and packed dynamic-array elements.
 
-### Fixture 10: Assembly Evidence
+**Conclusion:** High confidence for value shape with a constant key anchor, no conclusion about unrecovered key semantics.
 
-Fixture 10 is a behavior test, not a claim that the validator can identify
-assembly from runtime bytecode. The canonical contract uses direct `SSTORE`, a
-packed composite write, manual mapping `KECCAK256`, a manual dynamic-array
-path, and a caller-provided raw slot. It produces `0 collisions / 4 validated
-/ 2 scoped uncertainties`. The incompatible contract produces `2 collisions /
-2 validated / 2 scoped uncertainties`: an `address` write contradicts a
-canonical `uint256` mapping value and a `uint8` write contradicts a canonical
-`uint256[]` element.
+#### Fixture 3: Storage Key
 
-The packed composite and raw-slot writes remain reference evidence only. EVMole
-materializes static calldata arguments with a zero-valued placeholder, so a raw
-`bytes32 slot` argument can be displayed as `0x00`; this is not a claim about
-the slot supplied at runtime.
+| Variant | Collisions | Validated | Uncertain |
+| --- | ---: | ---: | ---: |
+| Canonical | 0 | 8 | 0 |
+| Dynamic-width mismatch | 2 | 0 | 0 |
+| Fixed-width mismatch | 2 | 0 | 0 |
 
-### Fixture 11: Solady-Style Custom Coordinates
+**Characteristics:** Mapping keys loaded from storage and dynamic or fixed indexes.
 
-Fixture 11 reproduces the custom ERC721 ownership and balance coordinate style
-used by [Solady's ERC721 implementation](https://github.com/Vectorized/solady/blob/main/src/tokens/ERC721.sol): a short seed is combined with an id or address,
-then the ownership location adds the id twice to the resulting hash. This is not
-the canonical Solidity `keccak256(key . mappingSlot)` mapping path represented
-by VSL. Both the canonical and reordered packed-write variants therefore return
-one scoped uncertainty. The validator makes no claim that either variant is
-safe, and it does not manufacture a collision from an unproved coordinate.
+**Conclusion:** High confidence when VSL supplies the storage-key type, no conclusion for an unanchored key path.
+
+#### Fixture 4: Mapping Struct
+
+| Variant | Collisions | Validated | Uncertain |
+| --- | ---: | ---: | ---: |
+| Canonical | 0 | 5 | 0 |
+| Reordered packed members | 2 | 3 | 0 |
+
+**Characteristics:** Mapping child deltas from `KECCAK256 + constant` and packed struct members.
+
+**Conclusion:** High confidence when child deltas and packed offsets recover, no conclusion when either is lost.
+
+#### Fixture 5: Array Struct
+
+| Variant | Collisions | Validated | Uncertain |
+| --- | ---: | ---: | ---: |
+| Canonical | 0 | 9 | 0 |
+| Reordered members | 2 | 1 | 0 |
+| Wide reordered members | 2 | 1 | 0 |
+| Address-only projection | 0 | 0 | 1 |
+| Adjacent arrays | 1 | 0 | 1 |
+
+**Characteristics:** Packed and multi-slot array structs, scalar projections, and stride recovery.
+
+**Conclusion:** High confidence for complete element and stride evidence, no conclusion from a lone member projection.
+
+#### Fixture 5.1: Mapping Struct Projection
+
+| Variant | Collisions | Validated | Uncertain |
+| --- | ---: | ---: | ---: |
+| Canonical two members | 0 | 2 | 0 |
+| Single terminal projection | 0 | 0 | 1 |
+| Reordered two members | 2 | 0 | 0 |
+
+**Characteristics:** Mapping values whose terminal scalar can resemble a complete value.
+
+**Conclusion:** Useful for rejecting reordered mappings with multiple members, no conclusion from one terminal member.
+
+#### Fixture 6: Array Mapping Struct
+
+| Variant | Collisions | Validated | Uncertain |
+| --- | ---: | ---: | ---: |
+| Canonical | 0 | 3 | 0 |
+| Reordered members | 3 | 0 | 0 |
+
+**Characteristics:** Indexed array, mapping, and struct paths resolved recursively.
+
+**Conclusion:** High confidence for fully recovered recursive paths, no conclusion when a path segment is missing.
+
+#### Fixture 7: Array Mapping Struct Push
+
+| Variant | Collisions | Validated | Uncertain |
+| --- | ---: | ---: | ---: |
+| Canonical | 0 | 4 | 0 |
+| Incompatible struct | 1 | 1 | 1 |
+| Incompatible container and fields | 3 | 1 | 1 |
+
+**Characteristics:** Mapping to packed struct arrays created with `push()`, including nested arrays.
+
+**Conclusion:** Useful after child writes recover, no conclusion for the `push()` boundary itself.
+
+#### Final Full Storage
+
+| Variant | Collisions | Validated | Uncertain |
+| --- | ---: | ---: | ---: |
+| Canonical | 0 | 29 | 3 |
+| Compatible prefix | 0 | 1 | 0 |
+| Incompatible layout | 12 | 4 | 3 |
+
+**Characteristics:** Combined primitive, struct, mapping, array, fixed-array, and independent ERC-8110-style domains.
+
+**Conclusion:** High confidence across recovered layouts, no conclusion for terminal projections, bytes/string, or missing child paths.
+
+#### Fixture 8: Bytes and String
+
+| Variant | Collisions | Validated | Uncertain |
+| --- | ---: | ---: | ---: |
+| Canonical | 0 | 2 | 4 |
+| Swapped `bytes` and `string` | 0 | 2 | 4 |
+| Incompatible container | 2 | 0 | 0 |
+
+**Characteristics:** Dynamic `bytes`, `string`, `bytes[]`, and `string[]` payload flows.
+
+**Conclusion:** Useful for container-shape contradictions, no conclusion about bytes versus string payload semantics.
+
+#### Fixture 8.1: String Array Struct Bytes
+
+| Variant | Collisions | Validated | Uncertain |
+| --- | ---: | ---: | ---: |
+| Struct array with payload | 0 | 0 | 2 |
+| Struct array empty `push()` | 0 | 0 | 1 |
+| String array with payload | 0 | 0 | 2 |
+| String array empty `push()` | 0 | 0 | 1 |
+
+**Characteristics:** `string[]` compared with an array of structs holding `bytes data`.
+
+**Conclusion:** No confidence for this physical ambiguity, so it deliberately reaches no compatibility conclusion.
+
+#### Fixture 9: Delegatecall
+
+| Variant | Collisions | Validated | Uncertain |
+| --- | ---: | ---: | ---: |
+| Deployed target graph | 1 | 4 | 0 |
+
+**Characteristics:** Anvil-backed target resolution through immutable, storage, calldata, transient, symbolic, empty-code, missing-selector, and nested calls.
+
+**Conclusion:** High confidence for recovered target code and selectors, no conclusion for untraceable targets.
+
+#### Fixture 10: Assembly Evidence
+
+| Variant | Collisions | Validated | Uncertain |
+| --- | ---: | ---: | ---: |
+| Canonical assembly | 0 | 4 | 2 |
+| Incompatible assembly | 2 | 2 | 2 |
+
+**Characteristics:** Direct slots, packed composite writes, manual mapping and array paths, and caller-provided raw slots.
+
+**Conclusion:** Useful for concrete assembly paths, no conclusion for raw slots or opaque packed composites.
+
+#### Fixture 11: Solady Custom Coordinates
+
+| Variant | Collisions | Validated | Uncertain | Diagnostics |
+| --- | ---: | ---: | ---: | ---: |
+| Canonical custom coordinate | 0 | 0 | 2 | 2 |
+| Incompatible packed order | 0 | 0 | 2 | 2 |
+
+**Characteristics:** Solady-style ownership, balance/aux, and operator-approval coordinates across independent ERC-8110 domains.
+
+**Conclusion:** No compatibility confidence for custom coordinates, so they remain unresolved evidence only.
 
 ## Delegatecall Handling
 
@@ -267,13 +327,13 @@ context.
 
 The validator follows a deliberately narrow target allowlist:
 
-- bytecode constants and immutable runtime values;
+- bytecode constants and immutable runtime values,
 - persistent `SLOAD` values when their concrete slot can be read through
-  `eth_getStorageAt`; and
+  `eth_getStorageAt`, and
 - nested targets reached from those traces, bounded by a configurable depth
   limit and `(target, selector)` visited set.
 
-Persistent `SSTORE` is the only storage write domain compared with VSL;
+Persistent `SSTORE` is the only storage write domain compared with VSL,
 transient storage is not layout state. Targets outside the supported recovery
 set are reported as non-blocking `delegatecallWarnings`.
 
@@ -286,7 +346,7 @@ stack, which is enough to recover forwarded selectors.
 
 ### Evidence Coverage
 
-The validator proves recovered contradictions; an empty collision list is not a
+The validator proves recovered contradictions, an empty collision list is not a
 complete safety proof. Unreached paths and unsupported bytecode patterns,
 including assembly-origin code that the symbolic tracer cannot recover, remain
 outside the evidence set.
@@ -301,7 +361,7 @@ each element and its payload remain uncertain. A proven incompatible outer
 container or root shape is still reported as a collision.
 
 The same ambiguity extends to `string[]` and a one-member
-`struct { bytes data; }[]`: both use a one-slot array element whose payload has
+an array of structs with a `bytes data` field, both use a one-slot array element whose payload has
 the same bytes/string encoding. Payload writes and empty `push()` operations
 therefore remain scoped uncertainty unless another recovered member proves a
 different struct shape.
@@ -309,7 +369,7 @@ different struct shape.
 ### `push()` Child Boundaries
 
 For some nested dynamic-array `push()` paths, the tracer loses an element child
-boundary. It reports a scoped uncertainty for the affected array-length write;
+boundary. It reports a scoped uncertainty for the affected array-length write,
 independently recovered member writes still validate or collide normally.
 
 ### Inline Assembly
@@ -326,10 +386,10 @@ The planned Compose host policy is source-aware. TypeScript can scan Solidity
 AST `InlineAssembly` nodes and their Yul `externalReferences`, then attribute
 an assembly block to a VSL identifier when it can resolve the storage root. An
 attributed domain remains uncertain even when Rust recovers compatible write
-evidence; a proven Rust collision remains a collision. Assembly that cannot be
+evidence, a proven Rust collision remains a collision. Assembly that cannot be
 attributed to an identifier becomes a facet-level `unattributed assembly`
 warning, not evidence that every storage domain is safe. This AST signal
-describes the current source only; it does not identify assembly in historical
+describes the current source only, it does not identify assembly in historical
 deployed bytecode.
 
 ### Delegatecall Target Sources
@@ -377,7 +437,7 @@ pins the resulting block, and validates the deployed target graph:
 
 `tools/generate-vsl.mts` compiles one Solidity source with Foundry's `--ast`
 output and writes canonical VSL JSON. The tool-local VSL builder is
-copied from Compose CLI and preserves a readable `virtualPath`; its `id` is
+copied from Compose CLI and preserves a readable `virtualPath`, its `id` is
 canonicalized with `cast keccak` so it can match physical EVM storage roots.
 
 It requires Foundry (`forge`, `cast`) and `tsx` from a Compose CLI checkout.
@@ -397,10 +457,10 @@ Set `FOUNDRY_FORGE` or `FOUNDRY_CAST` when the executables are not on `PATH`.
 [Architecture.md](./Architecture.md) documents the inherited symbolic-execution
 engine and the Compose validator boundary. The main extension points are:
 
-- `src/storage/mod.rs`: raw storage evidence before EVMole collapses records;
-- `src/storage_validation/`: active VSL-driven persistent-write validator;
-- `src/compose/`: historical unbiased and VSL-bias comparison experiments;
-- `tools/`: VSL generation from Solidity AST;
+- `src/storage/mod.rs`: raw storage evidence before EVMole collapses records,
+- `src/storage_validation/`: active VSL-driven persistent-write validator,
+- `src/compose/`: historical unbiased and VSL-bias comparison experiments,
+- `tools/`: VSL generation from Solidity AST,
 - `tests/fixtures/evmole/`: canonical VSL and incompatible bytecode challenge
   sources for each fixture case.
 
@@ -408,6 +468,6 @@ engine and the Compose validator boundary. The main extension points are:
 
 This repository began as a fork of
 [EVMole](https://github.com/cdump/evmole) v0.9.3. The EVM interpreter,
-selector/argument recovery, and storage tracer remain the analysis substrate;
+selector/argument recovery, and storage tracer remain the analysis substrate,
 Compose-specific validator logic is added as a separate host layer. The original
 MIT license is retained in [LICENSE](./LICENSE).

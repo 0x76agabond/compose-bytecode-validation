@@ -18,6 +18,10 @@ enum Expectation {
     TerminalProjectionUncertainty,
     ByteStringUncertainty,
     ScopedUncertainty(usize),
+    CustomCoordinates {
+        uncertain_scopes: usize,
+        diagnostics: usize,
+    },
 }
 
 struct Case {
@@ -333,19 +337,25 @@ const CASES: &[Case] = &[
         name: "11-solady-erc721",
         directory: "11-solady-erc721",
         minimum_canonical_validated: 0,
-        maximum_canonical_uncertain: 1,
+        maximum_canonical_uncertain: 2,
         variants: &[
             Variant {
                 name: "canonical-solady-coordinate",
                 source: "Canonical.sol",
                 contract: "Case11SoladyCanonical",
-                expectation: Expectation::ScopedUncertainty(1),
+                expectation: Expectation::CustomCoordinates {
+                    uncertain_scopes: 2,
+                    diagnostics: 2,
+                },
             },
             Variant {
                 name: "incompatible-solady-packed-order",
                 source: "Incompatible.sol",
                 contract: "Case11SoladyIncompatible",
-                expectation: Expectation::ScopedUncertainty(1),
+                expectation: Expectation::CustomCoordinates {
+                    uncertain_scopes: 2,
+                    diagnostics: 2,
+                },
             },
         ],
     },
@@ -516,6 +526,37 @@ fn main() {
                         report.uncertain_scopes.len(),
                         expected_count,
                         "{} / {} has an unexpected uncertainty scope count",
+                        case.name,
+                        variant.name
+                    );
+                }
+                Expectation::CustomCoordinates {
+                    uncertain_scopes,
+                    diagnostics,
+                } => {
+                    assert!(
+                        report.collisions.is_empty(),
+                        "{} / {} must not manufacture a collision for a custom coordinate",
+                        case.name,
+                        variant.name
+                    );
+                    assert!(
+                        report.validated_variables.is_empty(),
+                        "{} / {} must not validate a custom coordinate as a VSL path",
+                        case.name,
+                        variant.name
+                    );
+                    assert_eq!(
+                        report.uncertain_scopes.len(),
+                        uncertain_scopes,
+                        "{} / {} has an unexpected custom-coordinate uncertainty count",
+                        case.name,
+                        variant.name
+                    );
+                    assert_eq!(
+                        report.diagnostics.len(),
+                        diagnostics,
+                        "{} / {} has an unexpected unresolved-root diagnostic count",
                         case.name,
                         variant.name
                     );

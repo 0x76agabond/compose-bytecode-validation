@@ -1,15 +1,11 @@
 {
   "records": [
     {
-      "id": "0xdc92781d823d3e710510ecb3d550fca20606cd9dcda6e7278821a3dc6f541bd9",
+      "id": "0x0695b7f1661b27ce9e9b208fb3f23604adf619c0c523128db11196e0233378ee",
       "kind": "normal",
       "codeWidth": 1,
       "layout": [
         "0xf1",
-        "0x2f",
-        "0xff",
-        "0xf1",
-        "0x03",
         "0x2f",
         "0xff"
       ],
@@ -17,16 +13,9 @@
         "0x01",
         "0xf1",
         "0x2f",
-        "0xff",
-        "0xf1",
-        "0x03",
-        "0x2f",
         "0xff"
       ],
       "slots": [
-        [
-          256
-        ],
         [
           256
         ]
@@ -34,37 +23,132 @@
       "source": "erc8042",
       "sourceName": "Canonical.sol",
       "contractName": "Case11SoladyCanonical",
-      "structName": "Storage",
-      "virtualPath": "compose.validation.case11.solady-erc721",
+      "structName": "OwnershipStorage",
+      "virtualPath": "compose.validation.case11.solady.ownership",
       "parentVirtualPath": null,
       "diamondName": null
     },
     {
-      "id": "0xb82869866d31f99d1160c4b6bda960505cd2bdde6ffaade78dcb69ec5a595dac",
-      "parentPath": "compose.validation.case11.solady-erc721",
+      "id": "0xf55ecaa4f214fbcd2049af7ceced9de450a523bf3b55a9ae5d2c8279712529cd",
+      "parentPath": "compose.validation.case11.solady.ownership",
       "kind": "normal",
       "codeWidth": 1,
       "layout": [
         "0x03",
-        "0x1b"
+        "0x1b",
+        "0x03"
       ],
       "serializedLayout": [
         "0x01",
         "0x03",
-        "0x1b"
+        "0x1b",
+        "0x03"
       ],
       "slots": [
         [
           160,
           96
+        ],
+        [
+          160
         ]
       ],
       "source": "erc8042",
       "sourceName": "Canonical.sol",
       "contractName": "Case11SoladyCanonical",
-      "structName": "Storage",
-      "virtualPath": "compose.validation.case11.solady-erc721.0",
-      "parentVirtualPath": "compose.validation.case11.solady-erc721",
+      "structName": "OwnershipStorage",
+      "virtualPath": "compose.validation.case11.solady.ownership.0",
+      "parentVirtualPath": "compose.validation.case11.solady.ownership",
+      "diamondName": null
+    },
+    {
+      "id": "0x624c4fd869a928dc5c6b6d11a8b5b3aa0dbe3b772c5e2f73b46cb65245eeaece",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf1",
+        "0x03",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf1",
+        "0x03",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ]
+      ],
+      "source": "erc8042",
+      "sourceName": "Canonical.sol",
+      "contractName": "Case11SoladyCanonical",
+      "structName": "BalanceStorage",
+      "virtualPath": "compose.validation.case11.solady.balance",
+      "parentVirtualPath": null,
+      "diamondName": null
+    },
+    {
+      "id": "0x9a29cf01795b104d0e27f460cb13c76b37b343b3c0bc632e443660f8c7a85488",
+      "parentPath": "compose.validation.case11.solady.balance",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0x13",
+        "0x2b"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0x13",
+        "0x2b"
+      ],
+      "slots": [
+        [
+          32,
+          224
+        ]
+      ],
+      "source": "erc8042",
+      "sourceName": "Canonical.sol",
+      "contractName": "Case11SoladyCanonical",
+      "structName": "BalanceStorage",
+      "virtualPath": "compose.validation.case11.solady.balance.0",
+      "parentVirtualPath": "compose.validation.case11.solady.balance",
+      "diamondName": null
+    },
+    {
+      "id": "0x86fb70c454d3a1c2cb2b819925f0c7476fe95e6ec8332e94a8c2edf336876b7a",
+      "kind": "normal",
+      "codeWidth": 1,
+      "layout": [
+        "0xf1",
+        "0x03",
+        "0xf1",
+        "0x03",
+        "0x01",
+        "0xff"
+      ],
+      "serializedLayout": [
+        "0x01",
+        "0xf1",
+        "0x03",
+        "0xf1",
+        "0x03",
+        "0x01",
+        "0xff"
+      ],
+      "slots": [
+        [
+          256
+        ]
+      ],
+      "source": "erc8042",
+      "sourceName": "Canonical.sol",
+      "contractName": "Case11SoladyCanonical",
+      "structName": "OperatorStorage",
+      "virtualPath": "compose.validation.case11.solady.operator",
+      "parentVirtualPath": null,
       "diamondName": null
     }
   ]
