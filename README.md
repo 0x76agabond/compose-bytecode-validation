@@ -226,6 +226,22 @@ Fixture 9 runs against Anvil rather than static fixture bytecode. Its deployed
 graph produces five expected non-blocking delegatecall warnings: calldata,
 transient storage, symbolic target, empty target code, and missing selector.
 
+### Fixture 10: Assembly Evidence
+
+Fixture 10 is a behavior test, not a claim that the validator can identify
+assembly from runtime bytecode. The canonical contract uses direct `SSTORE`, a
+packed composite write, manual mapping `KECCAK256`, a manual dynamic-array
+path, and a caller-provided raw slot. It produces `0 collisions / 4 validated
+/ 2 scoped uncertainties`. The incompatible contract produces `2 collisions /
+2 validated / 2 scoped uncertainties`: an `address` write contradicts a
+canonical `uint256` mapping value and a `uint8` write contradicts a canonical
+`uint256[]` element.
+
+The packed composite and raw-slot writes remain reference evidence only. EVMole
+materializes static calldata arguments with a zero-valued placeholder, so a raw
+`bytes32 slot` argument can be displayed as `0x00`; this is not a claim about
+the slot supplied at runtime.
+
 ## Delegatecall Handling
 
 `validate_with_delegate_calls` is an optional extension of the direct-write
@@ -256,8 +272,8 @@ stack, which is enough to recover forwarded selectors.
 ### Evidence Coverage
 
 The validator proves recovered contradictions; an empty collision list is not a
-complete safety proof. Unreached paths, unsupported compiler output, and
-arbitrary assembly outside the symbolic tracer's supported patterns remain
+complete safety proof. Unreached paths and unsupported bytecode patterns,
+including assembly-origin code that the symbolic tracer cannot recover, remain
 outside the evidence set.
 
 ### Dynamic `bytes` and `string`
@@ -283,12 +299,23 @@ independently recovered member writes still validate or collide normally.
 
 ### Inline Assembly
 
-Assembly has no source-level marker in deployed bytecode; the validator checks
-the recovered `SSTORE` behavior itself. Direct slots and manual
-mapping/array `KECCAK256` paths are compared against the VSL normally. A raw
-caller-provided slot, or a packed composite value whose individual member type
-cannot be recovered, is reported as scoped uncertainty rather than a false
-safe result.
+Runtime bytecode has no marker that distinguishes inline assembly from
+compiler-generated opcodes. The Rust validator is intentionally blind to that
+source distinction and checks recovered `SSTORE` behavior only. Direct slots
+and manual mapping/array `KECCAK256` paths are compared against the VSL
+normally. A raw caller-provided slot, or a packed composite value whose
+individual member type cannot be recovered, is scoped uncertainty rather than
+a false safe result.
+
+The planned Compose host policy is source-aware. TypeScript can scan Solidity
+AST `InlineAssembly` nodes and their Yul `externalReferences`, then attribute
+an assembly block to a VSL identifier when it can resolve the storage root. An
+attributed domain remains uncertain even when Rust recovers compatible write
+evidence; a proven Rust collision remains a collision. Assembly that cannot be
+attributed to an identifier becomes a facet-level `unattributed assembly`
+warning, not evidence that every storage domain is safe. This AST signal
+describes the current source only; it does not identify assembly in historical
+deployed bytecode.
 
 ### Delegatecall Target Sources
 
